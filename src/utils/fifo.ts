@@ -11,7 +11,8 @@ export interface FifoResult {
 export const calculateFifoBatches = (
   allBatches: ReagentBatch[],
   reagentCode: string,
-  requiredQty: number
+  requiredQty: number,
+  today: string = new Date().toISOString().slice(0, 10)
 ): FifoResult => {
   const candidates = allBatches
     .filter(
@@ -19,7 +20,8 @@ export const calculateFifoBatches = (
         b.reagentCode === reagentCode &&
         b.remainingQty > 0 &&
         !b.isLocked &&
-        b.inspectionPassed
+        b.inspectionPassed &&
+        b.expiryDate >= today
     )
     .sort((a, b) => {
       const cmp = a.expiryDate.localeCompare(b.expiryDate);

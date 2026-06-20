@@ -30,11 +30,20 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   },
 
   addBatch: (data) => {
+    const today = todayISO();
+    const isExpired = data.expiryDate < today;
+    const autoLocked = isExpired || !data.inspectionPassed;
     const nb: ReagentBatch = {
       ...data,
       id: "bat_" + uid().slice(0, 8),
       createdAt: nowISO(),
       remainingQty: data.quantity,
+      isLocked: autoLocked,
+      lockReason: autoLocked
+        ? isExpired
+          ? "入库时已过有效期，自动锁定"
+          : "QC验收不合格，自动锁定"
+        : undefined,
     };
     const list = [nb, ...get().batches];
     set({ batches: list });

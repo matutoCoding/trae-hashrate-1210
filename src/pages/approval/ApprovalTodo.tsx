@@ -125,11 +125,21 @@ export default function ApprovalTodo() {
     new Map(requisitions.map((r) => [r.applicantId, r.applicantName])).entries()
   );
 
+  const userCanApprove = (req: Requisition): boolean => {
+    if (!currentUser || !req.currentNodeId || req.approvalStatus !== "pending") return false;
+    const rule = rules.find((r) => r.id === req.matchedRouteId);
+    const node = rule?.workflow.nodes.find((n) => n.id === req.currentNodeId);
+    if (!node) return false;
+    if (node.assigneeUserIds?.includes(currentUser.id)) return true;
+    if (node.assigneeRoles?.some((r) => currentUser.roles.includes(r as any))) return true;
+    return false;
+  };
+
   const counts = React.useMemo(() => {
     const uid = currentUser?.id ?? "";
     return {
       todo: requisitions.filter(
-        (r) => r.approvalStatus === "pending" && r.currentNodeId
+        (r) => r.approvalStatus === "pending" && r.currentNodeId && userCanApprove(r)
       ).length,
       done: requisitions.filter((r) =>
         r.approvalHistory.some((h) => h.approverId === uid)
@@ -137,13 +147,15 @@ export default function ApprovalTodo() {
       mine: requisitions.filter((r) => r.applicantId === uid).length,
       all: requisitions.length,
     };
-  }, [requisitions, currentUser]);
+  }, [requisitions, currentUser, rules]);
 
   const filtered = React.useMemo(() => {
     const uid = currentUser?.id ?? "";
     let list = requisitions;
     if (activeTab === "todo") {
-      list = list.filter((r) => r.approvalStatus === "pending" && r.currentNodeId);
+      list = list.filter(
+        (r) => r.approvalStatus === "pending" && r.currentNodeId && userCanApprove(r)
+      );
     } else if (activeTab === "done") {
       list = list.filter((r) =>
         r.approvalHistory.some((h) => h.approverId === uid)
@@ -167,7 +179,7 @@ export default function ApprovalTodo() {
       );
     }
     return list;
-  }, [requisitions, activeTab, filterStatus, filterApplicant, searchText, currentUser]);
+  }, [requisitions, activeTab, filterStatus, filterApplicant, searchText, currentUser, rules]);
 
   const currentNodeLabel = (req: Requisition) => {
     if (!req.currentNodeId) return "-";
@@ -190,6 +202,11 @@ export default function ApprovalTodo() {
   const handleConfirm = () => {
     if (!actionModal) return;
     const { type, req } = actionModal;
+    if (!userCanApprove(req)) {
+      toast.error("无审批权限", "当前登录用户不是该审批节点的处理人");
+      setActionModal(null);
+      return;
+    }
     const approverName = currentUser?.realName ?? "系统";
     const approverId = currentUser?.id ?? "";
     const rule = rules.find((r) => r.id === req.matchedRouteId);
@@ -447,7 +464,7 @@ export default function ApprovalTodo() {
                             >
                               详情
                             </Button>
-                            {req.approvalStatus === "pending" && activeTab === "todo" && (
+                            {req.approvalStatus === "pending" && activeTab === "todo" && userCanApprove(req) && (
                               <>
                                 <Button
                                   variant="success"
@@ -498,7 +515,7 @@ export default function ApprovalTodo() {
             <Button variant="outline" onClick={() => setDetailOpen(false)}>
               关闭
             </Button>
-            {selectedReq?.approvalStatus === "pending" && activeTab === "todo" && (
+            {selectedReq?.approvalStatus === "pending" && activeTab === "todo" && userCanApprove(selectedReq) && (
               <>
                 <Button
                   variant="danger"

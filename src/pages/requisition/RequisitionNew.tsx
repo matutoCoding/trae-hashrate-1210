@@ -70,8 +70,9 @@ const RequisitionNew: React.FC = () => {
 
   const reagentOptions = React.useMemo(() => {
     const map = new Map<string, { code: string; name: string; hazard: string }>();
+    const today = new Date().toISOString().slice(0, 10);
     batches
-      .filter((b) => !b.isLocked && b.remainingQty > 0 && b.inspectionPassed)
+      .filter((b) => !b.isLocked && b.remainingQty > 0 && b.inspectionPassed && b.expiryDate >= today)
       .forEach((b) => {
         if (!map.has(b.reagentCode)) {
           map.set(b.reagentCode, {

@@ -263,6 +263,35 @@ const RequisitionDetail: React.FC = () => {
       setSignatureError("请输入领用人签字");
       return;
     }
+    const today = new Date().toISOString().slice(0, 10);
+    const issues: string[] = [];
+    for (const it of req.items) {
+      const bat = batches.find((b) => b.id === it.batchId);
+      if (!bat) {
+        issues.push(`「${it.reagentName} ${it.batchNo}」批次不存在或已被删除`);
+        continue;
+      }
+      if (bat.isLocked) {
+        issues.push(
+          `「${it.reagentName} ${it.batchNo}」已被锁定（${bat.lockReason || "禁止出库"}）`
+        );
+      }
+      if (bat.expiryDate < today) {
+        issues.push(`「${it.reagentName} ${it.batchNo}」已过有效期（${bat.expiryDate}）`);
+      }
+      if (bat.remainingQty < it.quantity) {
+        issues.push(
+          `「${it.reagentName} ${it.batchNo}」库存不足（需${it.quantity}${it.unit}，余${bat.remainingQty}${it.unit}）`
+        );
+      }
+    }
+    if (issues.length > 0) {
+      toast.error(
+        "出库校验失败",
+        issues.map((m) => "· " + m).join("\n")
+      );
+      return;
+    }
     setConfirming(true);
     try {
       const items = req.items.map((it) => {

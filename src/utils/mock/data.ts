@@ -168,7 +168,7 @@ const defaultWorkflow = (
 export const mockRouteRules: ApprovalRouteRule[] = [
   {
     id: "rule_hazard",
-    name: "危化品或高金额(>5000)三级审批",
+    name: "危化品三级会签审批",
     priority: 1,
     enabled: true,
     conditions: [
@@ -181,13 +181,29 @@ export const mockRouteRules: ApprovalRouteRule[] = [
     version: 1,
   },
   {
-    id: "rule_amount_mid",
-    name: "金额500-5000二级审批",
+    id: "rule_amount_high",
+    name: "高金额(>5000)普通试剂二级审批",
     priority: 2,
+    enabled: true,
+    conditions: [
+      { id: "c6", field: "totalAmount", operator: "gt", value: 5000 },
+      { id: "c7", field: "hazardLevel", operator: "eq", value: "无" },
+    ],
+    conditionLogic: "AND",
+    workflow: defaultWorkflow("middle"),
+    createdBy: "u_admin",
+    updatedAt: todayISO(),
+    version: 1,
+  },
+  {
+    id: "rule_amount_mid",
+    name: "金额500-5000普通试剂二级审批",
+    priority: 3,
     enabled: true,
     conditions: [
       { id: "c2", field: "totalAmount", operator: "gt", value: 500 },
       { id: "c3", field: "totalAmount", operator: "lte", value: 5000 },
+      { id: "c8", field: "hazardLevel", operator: "eq", value: "无" },
     ],
     conditionLogic: "AND",
     workflow: defaultWorkflow("middle"),
@@ -198,7 +214,7 @@ export const mockRouteRules: ApprovalRouteRule[] = [
   {
     id: "rule_amount_low",
     name: "普通试剂≤500元一级审批",
-    priority: 3,
+    priority: 4,
     enabled: true,
     conditions: [
       { id: "c4", field: "totalAmount", operator: "lte", value: 500 },

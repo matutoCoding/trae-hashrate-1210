@@ -65,6 +65,7 @@ import {
 import { useBatchStore } from "@/store/useBatchStore";
 import { useRequisitionStore } from "@/store/useRequisitionStore";
 import { mockQuals } from "@/utils/mock/data";
+import { loadLS, saveLS } from "@/utils/storage";
 import {
   fmt,
   fmtDateTime,
@@ -148,9 +149,16 @@ const HazardPage: React.FC = () => {
   const toast = useToast();
 
   const [activeTab, setActiveTab] = React.useState("inventory");
-  const [quals, setQuals] = React.useState<HazardQualification[]>(mockQuals);
+  const [quals, setQuals] = React.useState<HazardQualification[]>(() => {
+    const saved = loadLS<HazardQualification[]>("hazard_quals", []);
+    return saved.length ? saved : mockQuals;
+  });
   const [qualModalOpen, setQualModalOpen] = React.useState(false);
   const [editingQual, setEditingQual] = React.useState<HazardQualification | null>(null);
+
+  React.useEffect(() => {
+    saveLS("hazard_quals", quals);
+  }, [quals]);
 
   const [hazardFilter, setHazardFilter] = React.useState<string>("all");
   const [categoryFilter, setCategoryFilter] = React.useState<string>("all");
@@ -364,6 +372,13 @@ const HazardPage: React.FC = () => {
     setQualModalOpen(true);
   };
 
+  const computeQualStatus = (expiryDate: string): HazardQualification["status"] => {
+    const days = remainingDays(expiryDate);
+    if (days <= 0) return "expired";
+    if (days <= 30) return "expiring";
+    return "valid";
+  };
+
   const saveQual = () => {
     if (!qualForm.certificateNo || !qualForm.holder || !qualForm.issuingAuthority) {
       toast.error("请填写完整信息", "证书号、持有人、签发机构为必填项");
@@ -371,14 +386,18 @@ const HazardPage: React.FC = () => {
     }
     if (editingQual) {
       setQuals((prev) =>
-        prev.map((q) => (q.id === editingQual.id ? { ...q, ...qualForm } : q))
+        prev.map((q) =>
+          q.id === editingQual.id
+            ? { ...q, ...qualForm, status: computeQualStatus(qualForm.expiryDate) }
+            : q
+        )
       );
       toast.success("资质更新成功", `${qualForm.type}信息已更新`);
     } else {
       const newQual: HazardQualification = {
         id: "q_" + Date.now().toString(36),
         ...qualForm,
-        status: remainingDays(qualForm.expiryDate) > 30 ? "valid" : "expiring",
+        status: computeQualStatus(qualForm.expiryDate),
       };
       setQuals((prev) => [...prev, newQual]);
       toast.success("资质添加成功", `${qualForm.type}已录入系统`);
