@@ -23,13 +23,20 @@ import {
   ArrowUpFromLine,
   User,
   FileText,
+  Users,
+  Ban,
+  Eye,
+  BookmarkCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Card, CardBody, CardHeader, CardTitle, CardSubTitle } from "@/components/ui/Card";
+import { Card, CardBody, CardHeader, CardTitle, CardSubTitle, Tabs } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
+import { Table, THead, TBody, TR, TH, TD, Tabular, Empty } from "@/components/ui/Table";
 import { useBatchStore } from "@/store/useBatchStore";
+import { useRequisitionStore } from "@/store/useRequisitionStore";
+import { useApprovalStore } from "@/store/useApprovalStore";
 import { useToast } from "@/components/ui/Toast";
 import {
   HazardBadge,
@@ -127,6 +134,8 @@ const toneMap: Record<string, string> = {
 const BatchDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { batches, updateBatch, lockBatch, unlockBatch } = useBatchStore();
+  const { requisitions } = useRequisitionStore();
+  const { rules } = useApprovalStore();
   const toast = useToast();
   const batch = batches.find((b) => b.id === id);
 
@@ -137,6 +146,7 @@ const BatchDetail: React.FC = () => {
     storageCondition: "",
     hazardCodes: "",
   });
+  const [invTab, setInvTab] = React.useState<"overview" | "frozen">("overview");
 
   React.useEffect(() => {
     if (batch) {
@@ -179,6 +189,53 @@ const BatchDetail: React.FC = () => {
   const wl = getWarningLevel(batch.expiryDate, batch.isLocked);
   const timeline = genMockTimeline(batch);
   const remainingPct = Math.round((batch.remainingQty / batch.quantity) * 100);
+  const availableQty = Math.max(0, batch.remainingQty - (batch.frozenQty || 0));
+  const availablePct = Math.round((availableQty / batch.quantity) * 100);
+
+  const frozenList = React.useMemo(() => {
+    if (!id) return [];
+    const list: Array<{
+      reqId: string;
+      applicant: string;
+      purpose: string;
+      status: any;
+      statusLabel: string;
+      qty: number;
+      createdAt: string;
+      currentNode?: string;
+      routeName?: string;
+    }> = [];
+    for (const req of requisitions) {
+      if (req.approvalStatus !== "pending" && req.approvalStatus !== "approved") continue;
+      for (const it of req.items) {
+        if (it.batchId === id) {
+          const curNode = req.currentNodeId
+            ? rules.find((r: any) => r.id === req.matchedRouteId)?.workflow.nodes.find(
+                (n: any) => n.id === req.currentNodeId
+              )?.label
+            : undefined;
+          list.push({
+            reqId: req.id,
+            applicant: req.applicantName,
+            purpose: req.purpose,
+            status: req.approvalStatus,
+            statusLabel:
+              req.approvalStatus === "pending"
+                ? "审批中"
+                : req.approvalStatus === "approved"
+                ? "待出库"
+                : req.approvalStatus,
+            qty: it.quantity,
+            createdAt: req.createdAt,
+            currentNode: curNode,
+            routeName: req.matchedRouteName,
+          });
+          break;
+        }
+      }
+    }
+    return list.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  }, [id, requisitions, rules]);
 
   const handleLock = () => {
     if (!lockReason.trim()) {
@@ -377,136 +434,301 @@ const BatchDetail: React.FC = () => {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-success-50 to-emerald-100 flex items-center justify-center text-success-600">
-                <Package className="h-4 w-4" />
-              </div>
-              <div>
-                <CardTitle>库存与效期</CardTitle>
-                <CardSubTitle>实时库存状态与效期预警</CardSubTitle>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-success-50 to-emerald-100 flex items-center justify-center text-success-600">
+                  <Package className="h-4 w-4" />
+                </div>
+                <div>
+                  <CardTitle>库存与效期</CardTitle>
+                  <CardSubTitle>实时库存状态与效期预警</CardSubTitle>
+                </div>
               </div>
             </div>
           </CardHeader>
           <CardBody className="space-y-5">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-lg bg-gradient-to-br from-brand-50/80 to-white border border-brand-100">
-                <p className="text-[10px] text-ink-500">入库总量</p>
-                <p className="mt-1 flex items-baseline gap-1">
-                  <span className="text-xl font-bold text-ink-900 font-mono-tabular">
-                    {withComma(batch.quantity)}
-                  </span>
-                  <span className="text-xs text-ink-500">{batch.unit}</span>
-                </p>
-              </div>
-              <div className="p-3 rounded-lg bg-gradient-to-br from-success-50/80 to-white border border-success-200">
-                <p className="text-[10px] text-ink-500">当前库存</p>
-                <p className="mt-1 flex items-baseline gap-1">
-                  <span className="text-xl font-bold text-success-700 font-mono-tabular">
-                    {withComma(batch.remainingQty)}
-                  </span>
-                  <span className="text-xs text-ink-500">{batch.unit}</span>
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-ink-600 font-medium">库存消耗进度</span>
-                <div className="flex items-baseline gap-1">
-                  <span className={cn(
-                    "font-mono-tabular font-bold",
-                    remainingPct <= 20 ? "text-warning-red" : remainingPct <= 50 ? "text-amber-600" : "text-success-600"
-                  )}>
-                    {remainingPct}%
-                  </span>
-                </div>
-              </div>
-              <BatchRemainingBar batch={batch} />
-              <div className="flex justify-between text-[11px] text-ink-400 font-mono-tabular">
-                <span>已消耗 {withComma(batch.quantity - batch.remainingQty)} {batch.unit}</span>
-                <span>总额度 {withComma(batch.quantity)} {batch.unit}</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-lg bg-ink-50">
-                <p className="text-[10px] text-ink-500">库存金额</p>
-                <p className="mt-1 font-mono-tabular text-base font-bold text-ink-900">
-                  {currency(batch.remainingQty * batch.unitPrice)}
-                </p>
-                <p className="text-[10px] text-ink-400 mt-0.5">
-                  单价 {currency(batch.unitPrice)}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <div className={cn(
-                  "p-2.5 rounded-lg flex items-center justify-between",
-                  warningColorMap[wl.level].bg,
-                  warningColorMap[wl.level].border,
-                  "border"
-                )}>
-                  <div className="flex items-center gap-2">
-                    <Clock className={cn("h-4 w-4", warningColorMap[wl.level].text)} />
-                    <div>
-                      <p className={cn("text-[10px] font-medium", warningColorMap[wl.level].text)}>
-                        效期预警
-                      </p>
-                      <p className={cn("text-xs font-bold", warningColorMap[wl.level].text)}>
-                        {wl.label}
-                      </p>
+            <Tabs
+              value={invTab}
+              onChange={(v) => setInvTab(v as any)}
+              items={[
+                {
+                  id: "overview",
+                  label: (
+                    <div className="flex items-center gap-1.5">
+                      <Package className="h-3.5 w-3.5" />
+                      库存概览
                     </div>
+                  ),
+                },
+                {
+                  id: "frozen",
+                  label: (
+                    <div className="flex items-center gap-1.5">
+                      <BookmarkCheck className="h-3.5 w-3.5" />
+                      冻结占用
+                      {frozenList.length > 0 && (
+                        <Badge tone="warning" size="sm" className="ml-1 !h-4 !px-1.5 !text-[10px]">
+                          {frozenList.length}
+                        </Badge>
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+            {invTab === "overview" && (
+              <div className="space-y-5 pt-2">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-brand-50/80 to-white border border-brand-100">
+                    <p className="text-[10px] text-ink-500">入库总量</p>
+                    <p className="mt-1 flex items-baseline gap-1">
+                      <span className="text-xl font-bold text-ink-900 font-mono-tabular">
+                        {withComma(batch.quantity)}
+                      </span>
+                      <span className="text-xs text-ink-500">{batch.unit}</span>
+                    </p>
                   </div>
-                  {wl.level === "normal" ? (
-                    <CheckCircle2 className="h-5 w-5 text-success-500" />
-                  ) : wl.level === "expired" ? (
-                    <XCircle className="h-5 w-5 text-warning-red" />
-                  ) : (
-                    <AlertTriangle className={cn("h-5 w-5", warningColorMap[wl.level].text)} />
-                  )}
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-ink-100 overflow-hidden">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all",
-                      warningColorMap[wl.level].bar
-                    )}
-                    style={{
-                      width: `${Math.max(5, Math.min(100, 100 - (wl.days / 365) * 100))}%`,
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {batch.storageCondition && (
-              <div className="p-3 rounded-lg bg-gradient-to-br from-amber-50 to-white border border-amber-100">
-                <div className="flex items-start gap-2.5">
-                  <div className="h-7 w-7 shrink-0 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600">
-                    <Thermometer className="h-3.5 w-3.5" />
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-success-50/80 to-white border border-success-200">
+                    <p className="text-[10px] text-ink-500">当前库存</p>
+                    <p className="mt-1 flex items-baseline gap-1">
+                      <span className="text-xl font-bold text-success-700 font-mono-tabular">
+                        {withComma(batch.remainingQty)}
+                      </span>
+                      <span className="text-xs text-ink-500">{batch.unit}</span>
+                    </p>
                   </div>
-                  <div>
-                    <p className="text-xs font-semibold text-amber-800">存储条件</p>
-                    <p className="mt-1 text-xs text-amber-700 leading-5">
-                      {batch.storageCondition}
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-amber-50/80 to-white border border-amber-200">
+                    <p className="text-[10px] text-ink-500">
+                      可用 <span className="text-[9px] text-amber-600">(除冻结)</span>
+                    </p>
+                    <p className="mt-1 flex items-baseline gap-1">
+                      <span className="text-xl font-bold text-amber-700 font-mono-tabular">
+                        {withComma(availableQty)}
+                      </span>
+                      <span className="text-xs text-ink-500">{batch.unit}</span>
                     </p>
                   </div>
                 </div>
-              </div>
-            )}
-
-            {!batch.inspectionPassed && (
-              <div className="p-3 rounded-lg bg-warning-red/5 border border-warning-red/20">
-                <div className="flex items-start gap-2.5">
-                  <AlertTriangle className="h-4 w-4 text-warning-red shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-semibold text-warning-red">验收未通过</p>
-                    {batch.inspectionRemark && (
-                      <p className="mt-1 text-xs text-warning-red/80 leading-5">
-                        {batch.inspectionRemark}
+                {(batch.frozenQty || 0) > 0 && (
+                  <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2.5">
+                    <BookmarkCheck className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-xs text-amber-800 leading-5 flex-1">
+                      <p className="font-semibold">当前有 {batch.frozenQty} {batch.unit} 被申请单占用</p>
+                      <p className="mt-0.5 text-amber-700/90">
+                        切换到「冻结占用」Tab 查看明细，仅在新申请审批通过后真正扣减
                       </p>
-                    )}
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-ink-600 font-medium">剩余可用进度</span>
+                    <div className="flex items-baseline gap-1">
+                      <span className={cn(
+                        "font-mono-tabular font-bold",
+                        availablePct <= 10 ? "text-warning-red" : availablePct <= 30 ? "text-amber-600" : "text-success-600"
+                      )}>
+                        {availablePct}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="h-3 rounded-full bg-ink-100 overflow-hidden flex">
+                    <div
+                      className="h-full bg-success-500 transition-all"
+                      style={{ width: `${Math.max(0, availablePct)}%` }}
+                    />
+                    <div
+                      className="h-full bg-amber-400 transition-all"
+                      style={{
+                        width: `${Math.max(
+                          0,
+                          Math.round(((batch.frozenQty || 0) / batch.quantity) * 100)
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[11px] text-ink-400 font-mono-tabular">
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-success-500" />
+                      可用 {withComma(availableQty)} {batch.unit}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+                      冻结 {withComma(batch.frozenQty || 0)} {batch.unit}
+                    </span>
+                    <span>
+                      已出 {withComma(batch.quantity - batch.remainingQty)} {batch.unit}
+                    </span>
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-ink-50">
+                    <p className="text-[10px] text-ink-500">库存金额</p>
+                    <p className="mt-1 font-mono-tabular text-base font-bold text-ink-900">
+                      {currency(batch.remainingQty * batch.unitPrice)}
+                    </p>
+                    <p className="text-[10px] text-ink-400 mt-0.5">
+                      单价 {currency(batch.unitPrice)}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <div className={cn(
+                      "p-2.5 rounded-lg flex items-center justify-between",
+                      warningColorMap[wl.level].bg,
+                      warningColorMap[wl.level].border,
+                      "border"
+                    )}>
+                      <div className="flex items-center gap-2">
+                        <Clock className={cn("h-4 w-4", warningColorMap[wl.level].text)} />
+                        <div>
+                          <p className={cn("text-[10px] font-medium", warningColorMap[wl.level].text)}>
+                            效期预警
+                          </p>
+                          <p className={cn("text-xs font-bold", warningColorMap[wl.level].text)}>
+                            {wl.label}
+                          </p>
+                        </div>
+                      </div>
+                      {wl.level === "normal" ? (
+                        <CheckCircle2 className="h-5 w-5 text-success-500" />
+                      ) : wl.level === "expired" ? (
+                        <XCircle className="h-5 w-5 text-warning-red" />
+                      ) : (
+                        <AlertTriangle className={cn("h-5 w-5", warningColorMap[wl.level].text)} />
+                      )}
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-ink-100 overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all",
+                          warningColorMap[wl.level].bar
+                        )}
+                        style={{
+                          width: `${Math.max(5, Math.min(100, 100 - (wl.days / 365) * 100))}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+                {batch.storageCondition && (
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-amber-50 to-white border border-amber-100">
+                    <div className="flex items-start gap-2.5">
+                      <div className="h-7 w-7 shrink-0 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600">
+                        <Thermometer className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-amber-800">存储条件</p>
+                        <p className="mt-1 text-xs text-amber-700 leading-5">
+                          {batch.storageCondition}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {!batch.inspectionPassed && (
+                  <div className="p-3 rounded-lg bg-warning-red/5 border border-warning-red/20">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="h-4 w-4 text-warning-red shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-semibold text-warning-red">验收未通过</p>
+                        {batch.inspectionRemark && (
+                          <p className="mt-1 text-xs text-warning-red/80 leading-5">
+                            {batch.inspectionRemark}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {invTab === "frozen" && (
+              <div className="pt-2 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-amber-50/80 to-white border border-amber-200">
+                    <p className="text-[10px] text-ink-500">冻结总量</p>
+                    <p className="mt-1 flex items-baseline gap-1">
+                      <span className="text-xl font-bold text-amber-700 font-mono-tabular">
+                        {withComma(batch.frozenQty || 0)}
+                      </span>
+                      <span className="text-xs text-ink-500">{batch.unit}</span>
+                    </p>
+                    <p className="text-[10px] text-amber-600 mt-0.5">
+                      占当前库存 {batch.remainingQty ? Math.round(((batch.frozenQty || 0) / batch.remainingQty) * 100) : 0}%
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-success-50/80 to-white border border-success-200">
+                    <p className="text-[10px] text-ink-500">实际还可接申请</p>
+                    <p className="mt-1 flex items-baseline gap-1">
+                      <span className="text-xl font-bold text-success-700 font-mono-tabular">
+                        {withComma(availableQty)}
+                      </span>
+                      <span className="text-xs text-ink-500">{batch.unit}</span>
+                    </p>
+                    <p className="text-[10px] text-success-600 mt-0.5">
+                      扣除冻结后剩余
+                    </p>
+                  </div>
+                </div>
+                {frozenList.length === 0 ? (
+                  <Empty
+                    text="当前批次没有被申请单锁定的库存"
+                    icon={<Ban className="h-8 w-8" />}
+                  />
+                ) : (
+                  <Table>
+                    <Tabular>
+                      <THead>
+                        <TR hoverable={false}>
+                          <TH>申请单号</TH>
+                          <TH>申请人</TH>
+                          <TH>用途</TH>
+                          <TH className="text-right">占用数量</TH>
+                          <TH>审批节点</TH>
+                          <TH>状态</TH>
+                          <TH>提交时间</TH>
+                        </TR>
+                      </THead>
+                      <TBody>
+                        {frozenList.map((fr) => (
+                          <TR
+                            key={fr.reqId}
+                            tone={fr.status === "approved" ? "warn" : undefined}
+                          >
+                            <TD className="font-mono text-xs">
+                              <Link to={`/requisition/${fr.reqId}`} className="text-brand-600 hover:underline flex items-center gap-1">
+                                <Eye className="h-3 w-3" />
+                                {fr.reqId}
+                              </Link>
+                            </TD>
+                            <TD>{fr.applicant}</TD>
+                            <TD className="max-w-[180px] truncate" title={fr.purpose}>
+                              {fr.purpose}
+                            </TD>
+                            <TD className="text-right font-mono-tabular font-semibold">
+                              {withComma(fr.qty)} {batch.unit}
+                            </TD>
+                            <TD className="text-xs text-ink-500">
+                              {fr.status === "approved" ? "待保管员出库" : fr.currentNode || "-"}
+                            </TD>
+                            <TD>
+                              <Badge
+                                tone={fr.status === "approved" ? "success" : "warning"}
+                                size="sm"
+                                dot
+                              >
+                                {fr.statusLabel}
+                              </Badge>
+                            </TD>
+                            <TD className="text-xs text-ink-500 font-mono-tabular">
+                              {fmtDateTime(fr.createdAt).slice(0, 16)}
+                            </TD>
+                          </TR>
+                        ))}
+                      </TBody>
+                    </Tabular>
+                  </Table>
+                )}
               </div>
             )}
           </CardBody>

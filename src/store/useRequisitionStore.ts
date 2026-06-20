@@ -21,6 +21,14 @@ interface ReqState {
     advanceNode: string | null,
     finalStatus: ApprovalStatus
   ) => void;
+  resubmitApproval: (
+    id: string,
+    routeId: string,
+    routeName: string,
+    firstNodeId: string,
+    newItems: RequisitionItem[],
+    newTotalAmount: number
+  ) => void;
   setCurrentNode: (id: string, nodeId: string | undefined) => void;
   addOutbound: (data: Omit<OutboundRecord, "id" | "outboundTime">) => OutboundRecord;
   findById: (id: string) => Requisition | undefined;
@@ -67,6 +75,7 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
   },
 
   submitApproval: (id, routeId, routeName, firstNodeId) => {
+    const now = nowISO();
     const list = get().requisitions.map((r) =>
       r.id === id
         ? {
@@ -75,6 +84,8 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
             matchedRouteName: routeName,
             approvalStatus: "pending" as const,
             currentNodeId: firstNodeId,
+            nodeEntryTimes: { ...(r.nodeEntryTimes || {}), [firstNodeId]: now },
+            nodeDelegations: r.nodeDelegations || {},
           }
         : r
     );
@@ -89,23 +100,39 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
   },
 
   addApprovalRecord: (reqId, record, advanceNode, finalStatus) => {
+    const now = nowISO();
+    const nowTs = new Date(now).getTime();
     const ar: ApprovalRecord = {
       ...record,
       id: "ar_" + uid().slice(0, 6),
       requisitionId: reqId,
-      timestamp: nowISO(),
+      timestamp: now,
       durationMinutes: 0,
     };
-    const list = get().requisitions.map((r) =>
-      r.id === reqId
-        ? {
-            ...r,
-            approvalHistory: [...r.approvalHistory, ar],
-            approvalStatus: finalStatus,
-            currentNodeId: advanceNode ?? undefined,
-          }
-        : r
-    );
+    const list = get().requisitions.map((r) => {
+      if (r.id !== reqId) return r;
+      let entryTimes = { ...(r.nodeEntryTimes || {}) };
+      if (advanceNode && !entryTimes[advanceNode]) {
+        entryTimes[advanceNode] = now;
+      }
+      // duration calculation for the just-finished node
+      if (record.nodeId && entryTimes[record.nodeId]) {
+        const startTs = new Date(entryTimes[record.nodeId]).getTime();
+        ar.durationMinutes = Math.max(0, Math.round((nowTs - startTs) / 60000));
+      }
+      let delegations = { ...(r.nodeDelegations || {}) };
+      if (record.action === "delegate" && record.delegatedToUserId && record.nodeId) {
+        delegations[record.nodeId] = record.delegatedToUserId;
+      }
+      return {
+        ...r,
+        approvalHistory: [...r.approvalHistory, ar],
+        approvalStatus: finalStatus,
+        currentNodeId: advanceNode ?? undefined,
+        nodeEntryTimes: entryTimes,
+        nodeDelegations: delegations,
+      };
+    });
     set({ requisitions: list });
     saveLS("requisitions", list);
     if (finalStatus === "rejected" || finalStatus === "returned") {
@@ -115,6 +142,40 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
           req.items.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
         );
       }
+    }
+  },
+
+  resubmitApproval: (id, routeId, routeName, firstNodeId, newItems, newTotalAmount) => {
+    const now = nowISO();
+    let req = get().requisitions.find((r) => r.id === id);
+    if (!req) return;
+    // 1) release old frozen
+    useBatchStore.getState().releaseFrozen(
+      req.items.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
+    );
+    // 2) clear history / reset state
+    const list = get().requisitions.map((r) =>
+      r.id === id
+        ? {
+            ...r,
+            items: newItems,
+            totalAmount: newTotalAmount,
+            matchedRouteId: routeId,
+            matchedRouteName: routeName,
+            approvalStatus: "pending" as const,
+            currentNodeId: firstNodeId,
+            nodeEntryTimes: { [firstNodeId]: now },
+            nodeDelegations: {},
+          }
+        : r
+    );
+    set({ requisitions: list });
+    saveLS("requisitions", list);
+    const req2 = list.find((r) => r.id === id);
+    if (req2) {
+      useBatchStore.getState().freezeQty(
+        req2.items.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
+      );
     }
   },
 

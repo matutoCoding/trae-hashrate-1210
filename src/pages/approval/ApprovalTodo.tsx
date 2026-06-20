@@ -133,6 +133,10 @@ export default function ApprovalTodo() {
     const rule = rules.find((r) => r.id === req.matchedRouteId);
     const node = rule?.workflow.nodes.find((n) => n.id === req.currentNodeId);
     if (!node) return false;
+    const delegatedTo = req.nodeDelegations?.[req.currentNodeId];
+    if (delegatedTo) {
+      return delegatedTo === currentUser.id;
+    }
     if (node.assigneeUserIds?.includes(currentUser.id)) return true;
     if (node.assigneeRoles?.some((r) => currentUser.roles.includes(r as any))) return true;
     return false;
@@ -249,6 +253,8 @@ export default function ApprovalTodo() {
       );
       toast.success("已驳回", `申请单 ${req.id} 已驳回`);
     } else {
+      const targetUser = useAuthStore.getState().users.find((u) => u.id === delegateUserId);
+      const targetName = targetUser?.realName ?? delegateUserId;
       addApprovalRecord(
         req.id,
         {
@@ -256,13 +262,15 @@ export default function ApprovalTodo() {
           nodeLabel: currentNodeLabel(req),
           approverId,
           approverName,
+          delegatedToUserId: delegateUserId,
+          delegatedToUserName: targetName,
           action: "delegate",
-          opinion: `转办给:${delegateUserId ? useAuthStore.getState().users.find((u) => u.id === delegateUserId)?.realName : ""} ${opinion}`,
+          opinion: opinion || `转办给 ${targetName}`,
         },
         req.currentNodeId ?? null,
         "pending"
       );
-      toast.success("转办成功", `申请单 ${req.id} 已转办`);
+      toast.success("转办成功", `申请单 ${req.id} 已转办给 ${targetName}`);
     }
     setActionModal(null);
   };
@@ -696,15 +704,33 @@ export default function ApprovalTodo() {
                   .filter((h) => h.action === "approve")
                   .map((h) => h.nodeId)
               );
-              const delegateRecords = selectedReq.approvalHistory.filter(
-                (h) => h.action === "delegate"
-              );
+              const delegateRecordsByNode = new Map<string, typeof selectedReq.approvalHistory>();
+              selectedReq.approvalHistory
+                .filter((h) => h.action === "delegate")
+                .forEach((h) => {
+                  const arr = delegateRecordsByNode.get(h.nodeId) || [];
+                  arr.push(h);
+                  delegateRecordsByNode.set(h.nodeId, arr);
+                });
+              const fmtDur = (mins: number) => {
+                if (mins < 60) return `${mins}分钟`;
+                const h = Math.floor(mins / 60);
+                const m = mins % 60;
+                return m > 0 ? `${h}h${m}m` : `${h}小时`;
+              };
+              const fmtDurFromNow = (entryISO: string) => {
+                const mins = Math.max(
+                  1,
+                  Math.round((Date.now() - new Date(entryISO).getTime()) / 60000)
+                );
+                return fmtDur(mins);
+              };
               return (
                 <div>
                   <h4 className="text-sm font-semibold text-ink-900 mb-3">
                     审批流轨迹
                   </h4>
-                  <div className="flex items-center gap-0">
+                  <div className="flex items-start gap-0 overflow-x-auto pb-2">
                     {rule.workflow.nodes
                       .filter(
                         (n) =>
@@ -727,27 +753,81 @@ export default function ApprovalTodo() {
                         const handlerRecord = selectedReq.approvalHistory.find(
                           (h) => h.nodeId === node.id && h.action === "approve"
                         );
-                        const delegateRec = delegateRecords.find(
-                          (h) => h.nodeId === node.id
-                        );
+                        const delegates = delegateRecordsByNode.get(node.id) || [];
+                        const latestDelegate = delegates.length > 0 ? delegates[delegates.length - 1] : null;
+                        const currentHandler = (() => {
+                          if (handlerRecord) return handlerRecord.approverName;
+                          if (isCurrent) {
+                            const delegatedToId = selectedReq.nodeDelegations?.[node.id];
+                            if (delegatedToId) {
+                              return useAuthStore
+                                .getState()
+                                .users.find((u) => u.id === delegatedToId)?.realName ?? delegatedToId;
+                            }
+                            if (node.assigneeUserIds?.length) {
+                              return node.assigneeUserIds
+                                .map(
+                                  (uid) =>
+                                    useAuthStore
+                                      .getState()
+                                      .users.find((u) => u.id === uid)?.realName ?? uid
+                                )
+                                .join("、");
+                            }
+                            if (node.assigneeRoles?.length) {
+                              return node.assigneeRoles
+                                .map((r) =>
+                                  useAuthStore
+                                    .getState()
+                                    .users.filter((u) => u.roles.includes(r as any))
+                                    .map((u) => u.realName)
+                                    .join("、")
+                                )
+                                .join("、");
+                            }
+                            return "-";
+                          }
+                          return undefined;
+                        })();
+                        const entryTime = isStart
+                          ? selectedReq.createdAt
+                          : selectedReq.nodeEntryTimes?.[node.id];
                         const timeoutHrs = node.timeoutHours;
-                        let timeoutLabel = "";
-                        if (isCurrent && timeoutHrs) {
-                          const entryTime = handlerRecord?.timestamp
-                            ? new Date(handlerRecord.timestamp)
-                            : new Date(selectedReq.createdAt);
-                          const elapsed =
-                            (Date.now() - entryTime.getTime()) / 3600000;
-                          const remaining = timeoutHrs - elapsed;
-                          if (remaining > 0) {
-                            timeoutLabel = `剩余${Math.floor(remaining)}h`;
+                        let timeInfoLabel: string | undefined;
+                        let timeInfoTone: string = "text-ink-400";
+                        if (handlerRecord && entryTime) {
+                          timeInfoLabel = `用时 ${fmtDur(handlerRecord.durationMinutes)}`;
+                        } else if (isCurrent && entryTime) {
+                          const elapsedMin = Math.max(
+                            1,
+                            Math.round((Date.now() - new Date(entryTime).getTime()) / 60000)
+                          );
+                          const waitedStr = `已等待 ${fmtDur(elapsedMin)}`;
+                          if (timeoutHrs) {
+                            const timeoutMin = timeoutHrs * 60;
+                            const remain = timeoutMin - elapsedMin;
+                            if (remain > 0) {
+                              timeInfoLabel = `${waitedStr} · 剩余${fmtDur(remain)}`;
+                              timeInfoTone = remain < 60 ? "text-amber-600" : "text-brand-500";
+                            } else {
+                              timeInfoLabel = `${waitedStr} · 已超时${fmtDur(Math.abs(remain))}`;
+                              timeInfoTone = "text-warning-red";
+                            }
                           } else {
-                            timeoutLabel = `已超时${Math.abs(Math.floor(remaining))}h`;
+                            timeInfoLabel = waitedStr;
+                            timeInfoTone = "text-brand-500";
+                          }
+                        } else if (!isStart && !isEnd) {
+                          if (timeoutHrs) {
+                            timeInfoLabel = `SLA ${timeoutHrs}h`;
                           }
                         }
+                        const entryLabel = entryTime
+                          ? `进入 ${fmtDateTime(entryTime).slice(0, 16)}`
+                          : undefined;
                         return (
                           <React.Fragment key={node.id}>
-                            <div className="flex flex-col items-center" style={{ minWidth: 90 }}>
+                            <div className="flex flex-col items-center flex-shrink-0" style={{ minWidth: 104 }}>
                               <div
                                 className={cn(
                                   "flex items-center justify-center rounded-full border-2 transition-all",
@@ -776,7 +856,7 @@ export default function ApprovalTodo() {
                                   </span>
                                 )}
                               </div>
-                              <div className="mt-1.5 text-center">
+                              <div className="mt-1.5 text-center w-full">
                                 <div
                                   className={cn(
                                     "text-[11px] font-semibold leading-tight",
@@ -789,55 +869,33 @@ export default function ApprovalTodo() {
                                 >
                                   {node.label}
                                 </div>
-                                {handlerRecord && (
-                                  <div className="text-[10px] text-ink-500 mt-0.5">
-                                    {handlerRecord.approverName}
-                                  </div>
-                                )}
-                                {isCurrent && !handlerRecord && (
-                                  <div className="text-[10px] text-ink-500 mt-0.5">
-                                    {node.assigneeUserIds
-                                      ? node.assigneeUserIds
-                                          .map(
-                                            (uid) =>
-                                              useAuthStore
-                                                .getState()
-                                                .users.find(
-                                                  (u) => u.id === uid
-                                                )?.realName ?? uid
-                                          )
-                                          .join("、")
-                                      : node.assigneeRoles
-                                          ?.map((r) => {
-                                            const users = useAuthStore
-                                              .getState()
-                                              .users.filter((u) =>
-                                                u.roles.includes(r as any)
-                                              );
-                                            return users
-                                              .map((u) => u.realName)
-                                              .join("、");
-                                          })
-                                          .join("、") ?? "-"}
-                                  </div>
-                                )}
-                                {delegateRec && isCurrent && (
-                                  <div className="text-[10px] text-brand-500 mt-0.5 flex items-center justify-center gap-0.5">
-                                    <Forward className="h-2.5 w-2.5" />
-                                    转办中
-                                  </div>
-                                )}
-                                {timeoutLabel && (
+                                {currentHandler && (
                                   <div
                                     className={cn(
-                                      "text-[10px] mt-0.5 font-medium",
-                                      timeoutLabel.includes("超时")
-                                        ? "text-warning-red"
-                                        : "text-amber-600"
+                                      "text-[10px] mt-0.5",
+                                      isCurrent ? "text-ink-600 font-medium" : "text-ink-500"
                                     )}
                                   >
-                                    <Clock className="h-2.5 w-2.5 inline mr-0.5" />
-                                    {timeoutLabel}
+                                    {currentHandler}
+                                  </div>
+                                )}
+                                {delegates.length > 0 && (
+                                  <div className="space-y-0.5 mt-1">
+                                    {delegates.map((d) => (
+                                      <div key={d.id} className="text-[9px] text-brand-500 flex items-center justify-center gap-0.5">
+                                        <Forward className="h-2.5 w-2.5" />
+                                        {d.approverName}→{d.delegatedToUserName}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {entryLabel && (
+                                  <div className="text-[9px] text-ink-400 mt-1">{entryLabel}</div>
+                                )}
+                                {timeInfoLabel && (
+                                  <div className={cn("text-[9px] mt-0.5 font-medium", timeInfoTone)}>
+                                    <Clock className="h-2 w-2 inline mr-0.5 -translate-y-[1px]" />
+                                    {timeInfoLabel}
                                   </div>
                                 )}
                               </div>
@@ -845,7 +903,8 @@ export default function ApprovalTodo() {
                             {idx < arr.length - 1 && (
                               <div
                                 className={cn(
-                                  "flex-1 h-0.5 mt-4 mx-1 rounded",
+                                  "flex-1 h-0.5 mt-4 mx-1 rounded flex-shrink-0",
+                                  "w-8",
                                   isDone ? "bg-success-300" : "bg-ink-200"
                                 )}
                               />

@@ -126,6 +126,8 @@ export interface ApprovalRecord {
   nodeLabel: string;
   approverId: string;
   approverName: string;
+  delegatedToUserId?: string;
+  delegatedToUserName?: string;
   action: "approve" | "reject" | "return" | "delegate" | "auto";
   opinion?: string;
   timestamp: string;
@@ -144,6 +146,8 @@ export interface Requisition {
   matchedRouteName?: string;
   approvalStatus: ApprovalStatus;
   currentNodeId?: string;
+  nodeDelegations?: Record<string, string>;
+  nodeEntryTimes?: Record<string, string>;
   approvalHistory: ApprovalRecord[];
   hazardQualIds?: string[];
   createdAt: string;

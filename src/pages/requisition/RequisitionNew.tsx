@@ -56,7 +56,7 @@ const RequisitionNew: React.FC = () => {
   const user = useCurrentUser();
   const { batches } = useBatchStore();
   const { rules } = useApprovalStore();
-  const { createRequisition, submitApproval, findById } = useRequisitionStore();
+  const { createRequisition, submitApproval, findById, resubmitApproval } = useRequisitionStore();
   const toast = useToast();
 
   const [purpose, setPurpose] = React.useState("");
@@ -114,6 +114,12 @@ const RequisitionNew: React.FC = () => {
         if (newRows.length > 0) setRows(newRows);
       }
     }
+  }, [draftId, findById]);
+
+  const returningReq = React.useMemo(() => {
+    if (!draftId) return null;
+    const d = findById(draftId);
+    return d && d.approvalStatus === "returned" ? d : null;
   }, [draftId, findById]);
 
   const rowFifoResults = React.useMemo(() => {
@@ -285,6 +291,10 @@ const RequisitionNew: React.FC = () => {
 
   const handleSaveDraft = async () => {
     if (!user) return;
+    if (returningReq) {
+      toast.error("退回的申请请直接提交审批", "沿用原申请单流转，不保存为新草稿");
+      return;
+    }
     if (!validateForm()) return;
     setSaving(true);
     try {
@@ -314,26 +324,41 @@ const RequisitionNew: React.FC = () => {
     }
     setSubmitting(true);
     try {
-      const data = {
-        applicantId: user.id,
-        applicantName: user.realName,
-        department: user.department,
-        purpose: purpose.trim(),
-        items: allItems,
-        totalAmount,
-        status: "draft" as const,
-      };
-      const req = createRequisition(data);
-      const firstApproveNode = routeMatch.rule.workflow.nodes.find(
-        (n) => n.type === "approve"
-      );
-      submitApproval(
-        req.id,
-        routeMatch.rule.id,
-        routeMatch.rule.name,
-        firstApproveNode?.id || ""
-      );
-      toast.success("已提交审批", `单号 ${req.id}，进入${routeMatch.rule.name}`);
+      if (returningReq) {
+        const firstApproveNode = routeMatch.rule.workflow.nodes.find(
+          (n) => n.type === "approve"
+        );
+        resubmitApproval(
+          returningReq.id,
+          routeMatch.rule.id,
+          routeMatch.rule.name,
+          firstApproveNode?.id || "",
+          allItems,
+          totalAmount
+        );
+        toast.success("已重新提交审批", `沿用原单号 ${returningReq.id}，系统已释放旧占用并重新冻结当前推荐批次`);
+      } else {
+        const data = {
+          applicantId: user.id,
+          applicantName: user.realName,
+          department: user.department,
+          purpose: purpose.trim(),
+          items: allItems,
+          totalAmount,
+          status: "draft" as const,
+        };
+        const req = createRequisition(data);
+        const firstApproveNode = routeMatch.rule.workflow.nodes.find(
+          (n) => n.type === "approve"
+        );
+        submitApproval(
+          req.id,
+          routeMatch.rule.id,
+          routeMatch.rule.name,
+          firstApproveNode?.id || ""
+        );
+        toast.success("已提交审批", `单号 ${req.id}，进入${routeMatch.rule.name}`);
+      }
       navigate("/requisition");
     } finally {
       setSubmitting(false);
@@ -350,12 +375,21 @@ const RequisitionNew: React.FC = () => {
             </Button>
           </Link>
           <div>
-            <h1 className="text-lg font-semibold text-ink-900">新建领用申请</h1>
+            <h1 className="text-lg font-semibold text-ink-900">
+              {returningReq ? "修改重提领用申请" : "新建领用申请"}
+            </h1>
             <p className="text-xs text-ink-500 mt-0.5">
-              填写领用信息 → 系统自动匹配审批流 → 提交审批
+              {returningReq
+                ? `沿用原单号 ${returningReq.id}，系统将自动释放旧占用并按最新库存重新冻结推荐批次`
+                : "填写领用信息 → 系统自动匹配审批流 → 提交审批"}
             </p>
           </div>
         </div>
+        {returningReq && (
+          <Badge tone="orange" size="sm" dot>
+            原单号 {returningReq.id}
+          </Badge>
+        )}
       </div>
 
       <div className="flex gap-4 items-start">
