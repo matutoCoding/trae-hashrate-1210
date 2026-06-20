@@ -11,6 +11,7 @@ import {
   ArrowUpRightFromSquare,
   ShieldAlert,
   ChevronRight,
+  BookmarkCheck,
 } from "lucide-react";
 import {
   AreaChart,
@@ -89,6 +90,27 @@ const Dashboard: React.FC = () => {
       (sum, b) => sum + b.remainingQty * b.unitPrice,
       0
     );
+  }, [batches]);
+
+  const alertStats = React.useMemo(() => {
+    let lowStock = 0;
+    let highFrozen = 0;
+    let both = 0;
+    let blockedValue = 0;
+    for (const b of batches) {
+      if (b.isLocked) continue;
+      const availableQty = Math.max(0, b.remainingQty - (b.frozenQty || 0));
+      const frozenQty = b.frozenQty || 0;
+      const availableRatio = b.quantity > 0 ? availableQty / b.quantity : 0;
+      const frozenRatio = b.remainingQty > 0 ? frozenQty / b.remainingQty : 0;
+      const ls = availableRatio < 0.2;
+      const hf = frozenRatio > 0.7;
+      if (ls) lowStock++;
+      if (hf) highFrozen++;
+      if (ls && hf) both++;
+      if (ls || hf) blockedValue += frozenQty * b.unitPrice;
+    }
+    return { lowStock, highFrozen, both, total: lowStock + highFrozen - both, blockedValue };
   }, [batches]);
 
   const warningStats = React.useMemo(() => {
@@ -264,7 +286,7 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <KpiCard
           label="总试剂批次"
           value={withComma(totalBatches)}
@@ -298,6 +320,28 @@ const Dashboard: React.FC = () => {
           suffix={warningStats.expired > 0 ? `+${warningStats.expired}过期` : undefined}
           sub="7天/30天/90天临期"
           onClick={() => navigate("/inventory/warning")}
+        />
+        <KpiCard
+          label="占用预警"
+          value={
+            <span className="flex items-baseline gap-1">
+              {alertStats.total > 0 && (
+                <span className="text-warning-red font-semibold animate-pulse">
+                  {alertStats.total}
+                </span>
+              )}
+              {alertStats.total === 0 && <span className="text-success-600">0</span>}
+            </span>
+          }
+          icon={<BookmarkCheck className="h-5 w-5" />}
+          tone={alertStats.total > 0 ? "danger" : "success"}
+          suffix="批"
+          sub={
+            alertStats.total > 0
+              ? `冻结占用 ${currency(alertStats.blockedValue)}`
+              : "库存健康"
+          }
+          onClick={() => navigate("/inventory/alert")}
         />
         <KpiCard
           label="待审批"

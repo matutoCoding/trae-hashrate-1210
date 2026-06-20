@@ -9,6 +9,7 @@ import BatchDetail from "@/pages/batch/BatchDetail";
 import InventoryList from "@/pages/inventory/InventoryList";
 import WarningCenter from "@/pages/inventory/WarningCenter";
 import ExpiredList from "@/pages/inventory/ExpiredList";
+import InventoryAlert from "@/pages/inventory/InventoryAlert";
 import ApprovalTodo from "@/pages/approval/ApprovalTodo";
 import ApprovalConfig from "@/pages/approval/ApprovalConfig";
 import ApprovalFlow from "@/pages/approval/ApprovalFlow";
@@ -48,6 +49,7 @@ export const AppRouter: React.FC = () => (
             <Route path="/inventory" element={<InventoryList />} />
             <Route path="/inventory/warning" element={<WarningCenter />} />
             <Route path="/inventory/expired" element={<ExpiredList />} />
+            <Route path="/inventory/alert" element={<InventoryAlert />} />
             <Route path="/approval/todo" element={<ApprovalTodo />} />
             <Route path="/approval/config" element={<ApprovalConfig />} />
             <Route path="/approval/flow" element={<ApprovalFlow />} />

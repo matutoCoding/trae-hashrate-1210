@@ -27,6 +27,7 @@ import {
   Ban,
   Eye,
   BookmarkCheck,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader, CardTitle, CardSubTitle, Tabs } from "@/components/ui/Card";
@@ -186,6 +187,8 @@ const BatchDetail: React.FC = () => {
     );
   }
 
+  const [frozenExpandedReqId, setFrozenExpandedReqId] = React.useState<string | null>(null);
+
   const wl = getWarningLevel(batch.expiryDate, batch.isLocked);
   const timeline = genMockTimeline(batch);
   const remainingPct = Math.round((batch.remainingQty / batch.quantity) * 100);
@@ -194,7 +197,7 @@ const BatchDetail: React.FC = () => {
 
   const frozenList = React.useMemo(() => {
     if (!id) return [];
-    const list: Array<{
+    const byReq = new Map<string, {
       reqId: string;
       applicant: string;
       purpose: string;
@@ -204,38 +207,47 @@ const BatchDetail: React.FC = () => {
       createdAt: string;
       currentNode?: string;
       routeName?: string;
-    }> = [];
+      batchItems: Array<{ batchNo: string; qty: number }>;
+    }>();
     for (const req of requisitions) {
       if (req.approvalStatus !== "pending" && req.approvalStatus !== "approved") continue;
+      let totalQtyForBatch = 0;
+      const batchItems: Array<{ batchNo: string; qty: number }> = [];
       for (const it of req.items) {
         if (it.batchId === id) {
-          const curNode = req.currentNodeId
-            ? rules.find((r: any) => r.id === req.matchedRouteId)?.workflow.nodes.find(
-                (n: any) => n.id === req.currentNodeId
-              )?.label
-            : undefined;
-          list.push({
-            reqId: req.id,
-            applicant: req.applicantName,
-            purpose: req.purpose,
-            status: req.approvalStatus,
-            statusLabel:
-              req.approvalStatus === "pending"
-                ? "审批中"
-                : req.approvalStatus === "approved"
-                ? "待出库"
-                : req.approvalStatus,
-            qty: it.quantity,
-            createdAt: req.createdAt,
-            currentNode: curNode,
-            routeName: req.matchedRouteName,
-          });
-          break;
+          totalQtyForBatch += it.quantity;
+          batchItems.push({ batchNo: it.batchNo, qty: it.quantity });
         }
       }
+      if (totalQtyForBatch > 0) {
+        const curNode = req.currentNodeId
+          ? rules.find((r: any) => r.id === req.matchedRouteId)?.workflow.nodes.find(
+              (n: any) => n.id === req.currentNodeId
+            )?.label
+          : undefined;
+        byReq.set(req.id, {
+          reqId: req.id,
+          applicant: req.applicantName,
+          purpose: req.purpose,
+          status: req.approvalStatus,
+          statusLabel:
+            req.approvalStatus === "pending"
+              ? "审批中"
+              : req.approvalStatus === "approved"
+              ? "待出库"
+              : req.approvalStatus,
+          qty: totalQtyForBatch,
+          createdAt: req.createdAt,
+          currentNode: curNode,
+          routeName: req.matchedRouteName,
+          batchItems,
+        });
+      }
     }
-    return list.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+    return Array.from(byReq.values()).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }, [id, requisitions, rules]);
+
+  const totalFrozenByList = frozenList.reduce((sum, f) => sum + f.qty, 0);
 
   const handleLock = () => {
     if (!lockReason.trim()) {
@@ -649,13 +661,18 @@ const BatchDetail: React.FC = () => {
                     <p className="text-[10px] text-ink-500">冻结总量</p>
                     <p className="mt-1 flex items-baseline gap-1">
                       <span className="text-xl font-bold text-amber-700 font-mono-tabular">
-                        {withComma(batch.frozenQty || 0)}
+                        {withComma(totalFrozenByList)}
                       </span>
                       <span className="text-xs text-ink-500">{batch.unit}</span>
                     </p>
                     <p className="text-[10px] text-amber-600 mt-0.5">
-                      占当前库存 {batch.remainingQty ? Math.round(((batch.frozenQty || 0) / batch.remainingQty) * 100) : 0}%
+                      占当前库存 {batch.remainingQty ? Math.round((totalFrozenByList / batch.remainingQty) * 100) : 0}%
                     </p>
+                    {totalFrozenByList !== (batch.frozenQty || 0) && (
+                      <p className="text-[9px] text-ink-400 mt-0.5">
+                        系统值 {batch.frozenQty || 0}，按申请单汇总校正为 {totalFrozenByList}
+                      </p>
+                    )}
                   </div>
                   <div className="p-3 rounded-lg bg-gradient-to-br from-success-50/80 to-white border border-success-200">
                     <p className="text-[10px] text-ink-500">实际还可接申请</p>
@@ -680,6 +697,7 @@ const BatchDetail: React.FC = () => {
                     <Tabular>
                       <THead>
                         <TR hoverable={false}>
+                          <TH className="w-10"></TH>
                           <TH>申请单号</TH>
                           <TH>申请人</TH>
                           <TH>用途</TH>
@@ -690,41 +708,107 @@ const BatchDetail: React.FC = () => {
                         </TR>
                       </THead>
                       <TBody>
-                        {frozenList.map((fr) => (
-                          <TR
-                            key={fr.reqId}
-                            tone={fr.status === "approved" ? "warn" : undefined}
-                          >
-                            <TD className="font-mono text-xs">
-                              <Link to={`/requisition/${fr.reqId}`} className="text-brand-600 hover:underline flex items-center gap-1">
-                                <Eye className="h-3 w-3" />
-                                {fr.reqId}
-                              </Link>
-                            </TD>
-                            <TD>{fr.applicant}</TD>
-                            <TD className="max-w-[180px] truncate" title={fr.purpose}>
-                              {fr.purpose}
-                            </TD>
-                            <TD className="text-right font-mono-tabular font-semibold">
-                              {withComma(fr.qty)} {batch.unit}
-                            </TD>
-                            <TD className="text-xs text-ink-500">
-                              {fr.status === "approved" ? "待保管员出库" : fr.currentNode || "-"}
-                            </TD>
-                            <TD>
-                              <Badge
-                                tone={fr.status === "approved" ? "success" : "warning"}
-                                size="sm"
-                                dot
+                        {frozenList.map((fr) => {
+                          const expanded = frozenExpandedReqId === fr.reqId;
+                          const multiItems = fr.batchItems.length > 1;
+                          return (
+                            <React.Fragment key={fr.reqId}>
+                              <TR
+                                tone={fr.status === "approved" ? "warn" : undefined}
                               >
-                                {fr.statusLabel}
-                              </Badge>
-                            </TD>
-                            <TD className="text-xs text-ink-500 font-mono-tabular">
-                              {fmtDateTime(fr.createdAt).slice(0, 16)}
-                            </TD>
-                          </TR>
-                        ))}
+                                <TD>
+                                  {multiItems && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="!h-6 !w-6"
+                                      onClick={() =>
+                                        setFrozenExpandedReqId(expanded ? null : fr.reqId)
+                                      }
+                                    >
+                                      <ChevronRight
+                                        className={cn(
+                                          "h-3.5 w-3.5 transition-transform",
+                                          expanded && "rotate-90"
+                                        )}
+                                      />
+                                    </Button>
+                                  )}
+                                </TD>
+                                <TD className="font-mono text-xs">
+                                  <Link
+                                    to={`/requisition/${fr.reqId}`}
+                                    className="text-brand-600 hover:underline flex items-center gap-1"
+                                  >
+                                    <Eye className="h-3 w-3" />
+                                    {fr.reqId}
+                                  </Link>
+                                </TD>
+                                <TD>{fr.applicant}</TD>
+                                <TD
+                                  className="max-w-[180px] truncate"
+                                  title={fr.purpose}
+                                >
+                                  {fr.purpose}
+                                </TD>
+                                <TD className="text-right font-mono-tabular font-semibold">
+                                  {withComma(fr.qty)} {batch.unit}
+                                  {multiItems && (
+                                    <span className="text-[10px] text-ink-400 font-normal ml-1">
+                                      ({fr.batchItems.length} 次分配)
+                                    </span>
+                                  )}
+                                </TD>
+                                <TD className="text-xs text-ink-500">
+                                  {fr.status === "approved"
+                                    ? "待保管员出库"
+                                    : fr.currentNode || "-"}
+                                </TD>
+                                <TD>
+                                  <Badge
+                                    tone={
+                                      fr.status === "approved" ? "success" : "warning"
+                                    }
+                                    size="sm"
+                                    dot
+                                  >
+                                    {fr.statusLabel}
+                                  </Badge>
+                                </TD>
+                                <TD className="text-xs text-ink-500 font-mono-tabular">
+                                  {fmtDateTime(fr.createdAt).slice(0, 16)}
+                                </TD>
+                              </TR>
+                              {expanded && multiItems && (
+                                <TR tone="warn">
+                                  <TD colSpan={8} className="!py-0 !px-0">
+                                    <div className="bg-ink-50/60 px-4 py-2 border-y border-ink-100">
+                                      <p className="text-[10px] text-ink-500 font-semibold mb-1.5">
+                                        申请单内对该批次的分配明细
+                                      </p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {fr.batchItems.map((bi, i) => (
+                                          <div
+                                            key={i}
+                                            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white border border-ink-200"
+                                          >
+                                            <Hash className="h-3 w-3 text-ink-400" />
+                                            <span className="text-[10px] font-mono-tabular text-ink-700">
+                                              {bi.batchNo}
+                                            </span>
+                                            <span className="text-[10px] text-ink-500">
+                                              × {withComma(bi.qty)} {batch.unit}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </TD>
+                                </TR>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
                       </TBody>
                     </Tabular>
                   </Table>

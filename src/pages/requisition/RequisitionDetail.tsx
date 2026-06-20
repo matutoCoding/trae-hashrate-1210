@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { Input, Select, Textarea } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { Card, CardBody, CardHeader, CardTitle, Tabs } from "@/components/ui/Card";
+import { Card, CardBody, CardHeader, CardTitle, CardSubTitle, Tabs } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
@@ -119,6 +119,9 @@ const RequisitionDetail: React.FC = () => {
     );
   }, [matchedRule]);
 
+  const resubmitCount = req?.resubmitInfo?.resubmitCount || 0;
+  const resubmitHistory = req?.resubmitInfo?.history || [];
+
   const approveNodes = React.useMemo(() => {
     if (!matchedRule?.workflow) return [] as ApprovalNode[];
     return matchedRule.workflow.nodes.filter((n) => n.type === "approve");
@@ -146,11 +149,13 @@ const RequisitionDetail: React.FC = () => {
     : null;
 
   const isApprover = React.useMemo(() => {
-    if (!user || !currentNode) return false;
+    if (!user || !currentNode || !req) return false;
+    const delegatedTo = req.nodeDelegations?.[currentNode.id];
+    if (delegatedTo) return delegatedTo === user.id;
     if (currentNode.assigneeUserIds?.includes(user.id)) return true;
     if (currentNode.assigneeRoles?.some((r) => user.roles.includes(r as any))) return true;
     return false;
-  }, [user, currentNode]);
+  }, [user, currentNode, req]);
 
   const getNodeState = (node: ApprovalNode, idx: number): "done" | "current" | "pending" => {
     if (!req) return "pending";
@@ -251,10 +256,41 @@ const RequisitionDetail: React.FC = () => {
     }
   };
 
-  const handleDelegate = () => {
-    setDelegateModal(false);
-    setDelegateUserId("");
-    toast.success("已转办", "已通知转办人处理");
+  const handleDelegate = async () => {
+    if (!req || !currentNode || !user) return;
+    if (!delegateUserId.trim()) {
+      toast.error("请选择转办人");
+      return;
+    }
+    const userLabel = (() => {
+      if (delegateUserId === "u_dept") return "陈主任";
+      if (delegateUserId === "u_safety") return "赵安全";
+      if (delegateUserId === "u_lab") return "孙主任";
+      return delegateUserId;
+    })();
+    setActing(true);
+    try {
+      addApprovalRecord(
+        req.id,
+        {
+          nodeId: currentNode.id,
+          nodeLabel: currentNode.label,
+          approverId: user.id,
+          approverName: user.realName,
+          action: "delegate",
+          opinion: `转办给 ${userLabel} 处理`,
+          delegatedToUserId: delegateUserId,
+          delegatedToUserName: userLabel,
+        },
+        currentNode.id,
+        "pending"
+      );
+      toast.success("已转办", `已通知 ${userLabel} 处理`);
+      setDelegateModal(false);
+      setDelegateUserId("");
+    } finally {
+      setActing(false);
+    }
   };
 
   const handleOutboundConfirm = async () => {
@@ -433,6 +469,7 @@ const RequisitionDetail: React.FC = () => {
                 items={[
                   { id: "items", label: <span className="flex items-center gap-1.5"><Package className="h-3.5 w-3.5" />申请明细</span>, count: req.items.length },
                   { id: "approval", label: <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />审批时间线</span>, count: req.approvalHistory.length },
+                  { id: "resubmit", label: <span className="flex items-center gap-1.5"><RotateCcw className="h-3.5 w-3.5" />重提追溯</span>, count: resubmitCount },
                 ]}
                 value={tab}
                 onChange={setTab}
@@ -537,89 +574,368 @@ const RequisitionDetail: React.FC = () => {
                     )}
                   </div>
                 ) : (
-                  <div className="relative pl-8">
-                    <div className="absolute left-3 top-1.5 bottom-1.5 w-px bg-ink-200" />
-                    {req.approvalHistory.map((h, idx) => {
-                      const action = actionBadgeMap[h.action] || actionBadgeMap.auto;
-                      const ActionIcon = action.icon;
-                      const isLast = idx === req.approvalHistory.length - 1;
-                      return (
-                        <div key={h.id} className="relative pb-6 last:pb-0">
-                          <div
-                            className={cn(
-                              "absolute -left-5 h-6 w-6 rounded-full flex items-center justify-center border-2 border-white shadow-sm",
-                              h.action === "approve" && "bg-success-500 text-white",
-                              h.action === "reject" && "bg-warning-red text-white",
-                              h.action === "return" && "bg-warning-orange text-white",
-                              h.action === "delegate" && "bg-brand-500 text-white",
-                              h.action === "auto" && "bg-ink-400 text-white"
-                            )}
-                          >
-                            <ActionIcon className="h-3 w-3" />
-                          </div>
-                          <div className={cn(
-                            "p-4 rounded-xl border transition-all",
-                            req.approvalStatus === "pending" && isLast
-                              ? "bg-brand-50/60 border-brand-200 animate-pulse-slow"
-                              : "bg-white border-ink-100"
-                          )}>
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-sm font-semibold text-ink-900">
-                                    {h.approverName}
-                                  </span>
-                                  <Badge tone={action.tone} size="sm">
-                                    <ActionIcon className="h-3 w-3 mr-0.5" />
-                                    {action.label}
+                  <div className="px-2">
+                    <div className="flex flex-nowrap overflow-x-auto gap-4 py-1 px-1">
+                      {workflowNodes.map((node, idx) => {
+                        const state = getNodeState(node, idx);
+                        const records = req.approvalHistory.filter((h) => h.nodeId === node.id);
+                        const handlerRecord = records.find((r) => r.action === "approve");
+                        const delegateRecords = records.filter((r) => r.action === "delegate");
+                        const firstRecord = records[0];
+                        const isCurrentNode = req.approvalStatus === "pending" && state === "current";
+                        const entryTime = (() => {
+                          if (firstRecord) return firstRecord.timestamp;
+                          if (req.nodeEntryTimes?.[node.id]) return req.nodeEntryTimes[node.id];
+                          if (isCurrentNode) {
+                            const lastHist = req.approvalHistory[req.approvalHistory.length - 1];
+                            return lastHist ? lastHist.timestamp : req.createdAt;
+                          }
+                          return undefined;
+                        })();
+                        const delegatedTo = req.nodeDelegations?.[node.id];
+                        const delegatedUser = delegatedTo
+                          ? (() => {
+                              if (delegatedTo === "u_dept") return "陈主任";
+                              if (delegatedTo === "u_safety") return "赵安全";
+                              if (delegatedTo === "u_lab") return "孙主任";
+                              return delegatedTo;
+                            })()
+                          : undefined;
+                        const displayHandler = handlerRecord
+                          ? handlerRecord.approverName
+                          : delegatedUser
+                          ? delegatedUser + "（转办）"
+                          : node.assigneeUserIds?.length
+                          ? "指定审批人"
+                          : node.assigneeRoles?.join("/") || "待分配";
+                        const timeoutHours = (node as any).timeoutHours || 24;
+                        const now = Date.now();
+                        const entryMs = entryTime ? new Date(entryTime).getTime() : now;
+                        const elapsedMs = now - entryMs;
+                        const elapsedMinutes = Math.floor(elapsedMs / 60000);
+                        const elapsedHours = Math.floor(elapsedMinutes / 60);
+                        const elapsedMinPart = elapsedMinutes % 60;
+                        const remainingMinutes = Math.floor(timeoutHours * 60) - elapsedMinutes;
+                        const remainingHours = Math.floor(Math.max(0, remainingMinutes) / 60);
+                        const remainingMinPart = Math.max(0, remainingMinutes) % 60;
+                        const isOvertime = remainingMinutes < 0;
+                        const isWarning = !isOvertime && remainingMinutes < 60;
+                        const timeColor = isOvertime
+                          ? "text-warning-red"
+                          : isWarning
+                          ? "text-amber-600"
+                          : "text-brand-600";
+                        const waitLabel = handlerRecord
+                          ? `用时 ${handlerRecord.durationMinutes || 0} 分钟`
+                          : isOvertime
+                          ? `已超时 ${Math.abs(Math.floor(remainingMinutes / 60))}h${Math.abs(remainingMinutes % 60)}m`
+                          : remainingHours > 0
+                          ? `已等待 ${elapsedHours}h${elapsedMinPart}m · 剩余${remainingHours}h${remainingMinPart}m`
+                          : `已等待 ${elapsedMinPart} 分钟 · 剩余${remainingMinPart} 分钟`;
+
+                        return (
+                          <div key={node.id} className="min-w-[280px] shrink-0">
+                            <div className="flex items-center gap-2 mb-2">
+                              <div
+                                className={cn(
+                                  "h-7 w-7 shrink-0 rounded-full border-2 flex items-center justify-center text-[11px] font-bold",
+                                  {
+                                    "bg-success-500 border-success-500 text-white": state === "done",
+                                    "bg-brand-500 border-brand-500 text-white animate-pulse": state === "current",
+                                    "bg-white border-ink-200 text-ink-400": state === "pending",
+                                  }
+                                )}
+                              >
+                                {node.type === "start" ? <Check className="h-3.5 w-3.5" /> : node.type === "end" ? <CheckCircle2 className="h-3.5 w-3.5" /> : idx}
+                              </div>
+                              <p className="text-sm font-semibold text-ink-900">{node.label}</p>
+                            </div>
+                            <div
+                              className={cn(
+                                "p-3 rounded-xl border space-y-2",
+                                {
+                                  "bg-success-50/60 border-success-200": state === "done",
+                                  "bg-brand-50/60 border-brand-200 animate-pulse-slow": state === "current",
+                                  "bg-ink-50/50 border-ink-100": state === "pending",
+                                }
+                              )}
+                            >
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium text-ink-800">{displayHandler}</span>
+                                {isCurrentNode && isApprover && (
+                                  <Badge tone="brand" size="sm" dot>
+                                    您为审批人
                                   </Badge>
-                                  <span className="text-xs text-ink-500 font-medium">
-                                    {h.nodeLabel}
-                                  </span>
+                                )}
+                                {delegatedUser && !handlerRecord && (
+                                  <Badge tone="warning" size="sm">
+                                    已转办
+                                  </Badge>
+                                )}
+                              </div>
+                              {entryTime && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Badge tone="default" size="sm" className="!py-0">
+                                    <Clock className="h-2.5 w-2.5 mr-0.5" />
+                                    进入 {fmtDateTime(entryTime).slice(5, 16)}
+                                  </Badge>
+                                  <Badge
+                                    tone={isOvertime ? "danger" : isWarning ? "warning" : "brand"}
+                                    size="sm"
+                                    className="!py-0"
+                                  >
+                                    <span className={cn("font-mono-tabular text-[10px]", timeColor)}>
+                                      {waitLabel}
+                                    </span>
+                                  </Badge>
                                 </div>
-                                {h.opinion && (
-                                  <p className="mt-2 text-sm text-ink-700 leading-5 bg-ink-50/80 rounded-lg px-3 py-2 border border-ink-100/60">
-                                    {h.opinion}
-                                  </p>
-                                )}
-                              </div>
-                              <div className="text-right shrink-0">
-                                <p className="text-xs font-mono-tabular text-ink-600">
-                                  {fmtDateTime(h.timestamp)}
-                                </p>
-                                {h.durationMinutes > 0 && (
-                                  <p className="text-[11px] text-ink-400 mt-0.5">
-                                    耗时 {h.durationMinutes} 分钟
-                                  </p>
-                                )}
-                              </div>
+                              )}
+                              {delegateRecords.length > 0 && (
+                                <div className="space-y-1 pt-1 border-t border-dashed border-ink-200">
+                                  {delegateRecords.map((d) => (
+                                    <div key={d.id} className="flex items-center gap-1.5 text-[11px] text-ink-500">
+                                      <Users className="h-3 w-3 text-amber-500" />
+                                      <span className="font-medium text-amber-700">
+                                        {d.approverName} → {d.delegatedToUserName}
+                                      </span>
+                                      <span className="font-mono-tabular text-ink-400 ml-1">
+                                        {fmtDateTime(d.timestamp).slice(5, 16)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {records.map((h) => {
+                                if (h.action === "delegate") return null;
+                                const action = actionBadgeMap[h.action] || actionBadgeMap.auto;
+                                const ActionIcon = action.icon;
+                                return (
+                                  <div key={h.id} className="pt-2 border-t border-ink-100/60">
+                                    <div className="flex items-center gap-1.5">
+                                      <ActionIcon className="h-3 w-3 text-ink-400" />
+                                      <span className="text-xs font-medium text-ink-600">
+                                        {h.approverName}
+                                      </span>
+                                      <Badge tone={action.tone} size="sm" className="!py-0">
+                                        {action.label}
+                                      </Badge>
+                                      <span className="text-[10px] font-mono-tabular text-ink-400 ml-auto">
+                                        {fmtDateTime(h.timestamp).slice(5, 16)}
+                                      </span>
+                                    </div>
+                                    {h.opinion && (
+                                      <p className="mt-1.5 text-[11px] text-ink-600 leading-5 bg-ink-50 rounded-md px-2 py-1.5 border border-ink-100/50">
+                                        {h.opinion}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {isCurrentNode && (
+                                <div className="pt-2 border-t border-dashed border-brand-300/50">
+                                  <div className="flex items-center gap-1.5">
+                                    <Clock className="h-3 w-3 text-brand-500 animate-pulse" />
+                                    <span className="text-xs font-medium text-brand-700">
+                                      等待处理...
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                    {req.approvalStatus === "pending" && currentNode && (
-                      <div className="relative pb-0">
-                        <div className="absolute -left-5 h-6 w-6 rounded-full flex items-center justify-center border-2 border-white shadow-sm bg-brand-500 text-white animate-pulse">
-                          <Clock className="h-3 w-3" />
-                        </div>
-                        <div className="p-4 rounded-xl border-2 border-dashed border-brand-300 bg-brand-50/30">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-semibold text-brand-700">
-                              当前节点：{currentNode.label}
-                            </span>
-                            {isApprover && (
-                              <Badge tone="brand" size="sm" dot>
-                                您为审批人
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="mt-1 text-xs text-brand-600">
-                            等待审批处理中...
-                          </p>
+                        );
+                      })}
+                    </div>
+                    {req.approvalHistory.length > 0 && (
+                      <div className="mt-4 pt-3 border-t border-ink-100">
+                        <p className="text-[10px] text-ink-400 font-semibold mb-2">操作流水</p>
+                        <div className="relative pl-6">
+                          <div className="absolute left-2.5 top-1.5 bottom-1.5 w-px bg-ink-200" />
+                          {req.approvalHistory.map((h, idx) => {
+                            const action = actionBadgeMap[h.action] || actionBadgeMap.auto;
+                            const ActionIcon = action.icon;
+                            const isLast = idx === req.approvalHistory.length - 1;
+                            return (
+                              <div key={h.id} className={cn("relative pb-4", isLast && "pb-0")}>
+                                <div
+                                  className={cn(
+                                    "absolute -left-4.5 h-5 w-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm",
+                                    h.action === "approve" && "bg-success-500 text-white",
+                                    h.action === "reject" && "bg-warning-red text-white",
+                                    h.action === "return" && "bg-warning-orange text-white",
+                                    h.action === "delegate" && "bg-brand-500 text-white",
+                                    h.action === "auto" && "bg-ink-400 text-white"
+                                  )}
+                                >
+                                  <ActionIcon className="h-2.5 w-2.5" />
+                                </div>
+                                <div className="p-2.5 rounded-lg border border-ink-100 bg-white">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-xs font-semibold text-ink-900">
+                                          {h.approverName}
+                                        </span>
+                                        <Badge tone={action.tone} size="sm" className="!py-0">
+                                          <ActionIcon className="h-2.5 w-2.5 mr-0.5" />
+                                          {action.label}
+                                        </Badge>
+                                        <span className="text-[10px] text-ink-500 font-medium">
+                                          {h.nodeLabel}
+                                        </span>
+                                        {h.delegatedToUserName && (
+                                          <span className="text-[10px] font-medium text-amber-700">
+                                            → {h.delegatedToUserName}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {h.opinion && (
+                                        <p className="mt-1.5 text-[11px] text-ink-600 leading-5 bg-ink-50/80 rounded-md px-2 py-1.5">
+                                          {h.opinion}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                      <p className="text-[10px] font-mono-tabular text-ink-500">
+                                        {fmtDateTime(h.timestamp).slice(5, 16)}
+                                      </p>
+                                      {h.durationMinutes > 0 && (
+                                        <p className="text-[9px] text-ink-400 mt-0.5">
+                                          节点耗时 {h.durationMinutes}m
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+              </CardBody>
+            )}
+            {tab === "resubmit" && (
+              <CardBody>
+                {resubmitHistory.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <div className="h-14 w-14 mx-auto rounded-full bg-ink-100 flex items-center justify-center text-ink-300">
+                      <RotateCcw className="h-7 w-7" />
+                    </div>
+                    <p className="mt-3 text-sm text-ink-500">暂无重提记录</p>
+                    <p className="mt-1 text-xs text-ink-400">退回修改后重新提交的记录将在此处展示</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {[...resubmitHistory].reverse().map((entry, idx) => {
+                      const prevBatchMap = new Map<string, number>();
+                      const newBatchMap = new Map<string, number>();
+                      entry.previousItems.forEach((it) => {
+                        prevBatchMap.set(it.batchId, (prevBatchMap.get(it.batchId) || 0) + it.quantity);
+                      });
+                      entry.newItems.forEach((it) => {
+                        newBatchMap.set(it.batchId, (newBatchMap.get(it.batchId) || 0) + it.quantity);
+                      });
+                      const allBatchIds = new Set([...prevBatchMap.keys(), ...newBatchMap.keys()]);
+                      const batchDiffs = Array.from(allBatchIds).map((bid) => {
+                        const bat = batches.find((b) => b.id === bid);
+                        const prev = prevBatchMap.get(bid) || 0;
+                        const now = newBatchMap.get(bid) || 0;
+                        return {
+                          batchId: bid,
+                          batchNo: bat?.batchNo || bid,
+                          reagentName: bat?.reagentName || "-",
+                          prev,
+                          now,
+                          diff: now - prev,
+                          unit: bat?.unit || "",
+                        };
+                      });
+
+                      return (
+                        <Card key={idx} className="border-amber-200 bg-amber-50/40">
+                          <CardHeader>
+                            <div className="flex items-center gap-2">
+                              <div className="h-8 w-8 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700">
+                                <RotateCcw className="h-4 w-4" />
+                              </div>
+                              <div>
+                                <CardTitle>第 {resubmitHistory.length - idx} 次重提</CardTitle>
+                                <CardSubTitle>
+                                  由 {entry.returnedByUserName} 于 {fmtDateTime(entry.returnedAt).slice(5, 16)} 退回，
+                                  申请人于 {fmtDateTime(entry.resubmittedAt).slice(5, 16)} 重新提交
+                                </CardSubTitle>
+                              </div>
+                            </div>
+                          </CardHeader>
+                          <CardBody className="space-y-3">
+                            {entry.returnOpinion && (
+                              <div className="p-3 rounded-lg bg-orange-50 border border-orange-200">
+                                <p className="text-[11px] font-semibold text-orange-700 mb-1">
+                                  退回意见
+                                </p>
+                                <p className="text-sm text-orange-800 leading-5">
+                                  {entry.returnOpinion}
+                                </p>
+                              </div>
+                            )}
+                            <div>
+                              <p className="text-[11px] font-semibold text-ink-500 mb-2">
+                                批次冻结对比（重提前 → 重提后）
+                              </p>
+                              <div className="rounded-lg border border-ink-200 overflow-hidden">
+                                <table className="w-full text-sm">
+                                  <thead className="bg-ink-50 text-ink-600 text-[11px]">
+                                    <tr>
+                                      <th className="px-3 py-2 text-left font-semibold">批次号</th>
+                                      <th className="px-3 py-2 text-left font-semibold">试剂</th>
+                                      <th className="px-3 py-2 text-right font-semibold">重提前</th>
+                                      <th className="px-3 py-2 text-right font-semibold">重提后</th>
+                                      <th className="px-3 py-2 text-right font-semibold">变动</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-ink-100">
+                                    {batchDiffs.map((bd) => (
+                                      <tr key={bd.batchId}>
+                                        <td className="px-3 py-2 font-mono-tabular text-xs text-ink-700">
+                                          {bd.batchNo}
+                                        </td>
+                                        <td className="px-3 py-2 text-xs truncate max-w-[180px]">
+                                          {bd.reagentName}
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono-tabular text-xs">
+                                          {withComma(bd.prev)} {bd.unit}
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono-tabular text-xs font-semibold text-ink-800">
+                                          {withComma(bd.now)} {bd.unit}
+                                        </td>
+                                        <td className="px-3 py-2 text-right font-mono-tabular text-xs">
+                                          <span
+                                            className={cn(
+                                              "font-semibold",
+                                              bd.diff > 0
+                                                ? "text-success-600"
+                                                : bd.diff < 0
+                                                ? "text-warning-red"
+                                                : "text-ink-500"
+                                            )}
+                                          >
+                                            {bd.diff > 0 ? "+" : ""}
+                                            {withComma(bd.diff)} {bd.unit}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </CardBody>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )}
               </CardBody>

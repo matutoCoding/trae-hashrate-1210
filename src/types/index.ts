@@ -151,6 +151,18 @@ export interface Requisition {
   approvalHistory: ApprovalRecord[];
   hazardQualIds?: string[];
   createdAt: string;
+  resubmitInfo?: {
+    resubmitCount: number;
+    history: Array<{
+      returnedAt: string;
+      returnedBy: string;
+      returnedByUserName: string;
+      returnOpinion: string;
+      resubmittedAt: string;
+      previousItems: RequisitionItem[];
+      newItems: RequisitionItem[];
+    }>;
+  };
 }
 
 export interface OutboundItem {

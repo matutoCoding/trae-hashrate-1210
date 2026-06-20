@@ -140,8 +140,8 @@ export const BatchTable: React.FC<Props> = ({ batches, showFifo, actions }) => {
                   </div>
                 </TD>
                 <TD>
-                  <div className="w-[160px]">
-                    <div className="flex items-baseline justify-between text-xs mb-1.5">
+                  <div className="w-[180px]">
+                    <div className="flex items-baseline justify-between text-xs mb-1">
                       <span className="font-mono-tabular font-semibold text-ink-900">
                         {withComma(b.remainingQty)}
                         <span className="text-ink-400 font-normal ml-0.5">{b.unit}</span>
@@ -151,6 +151,20 @@ export const BatchTable: React.FC<Props> = ({ batches, showFifo, actions }) => {
                       </span>
                     </div>
                     <BatchRemainingBar batch={b} />
+                    <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[11px]">
+                      <div className="flex justify-between">
+                        <span className="text-ink-400">冻结占用</span>
+                        <span className="font-mono-tabular text-rose-600 font-semibold">
+                          {withComma(b.frozenQty || 0)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-ink-400">可接申请</span>
+                        <span className="font-mono-tabular text-emerald-600 font-semibold">
+                          {withComma(Math.max(0, b.remainingQty - (b.frozenQty || 0)))}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 </TD>
                 <TD>

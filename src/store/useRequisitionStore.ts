@@ -43,12 +43,53 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
     if (get().initialized) return;
     const reqs = loadLS<Requisition[]>("requisitions", []);
     const outs = loadLS<OutboundRecord[]>("outbounds", []);
+
+    const migrated = reqs.length
+      ? reqs.map((r) => {
+          const migrated = { ...r };
+          migrated.nodeEntryTimes = migrated.nodeEntryTimes || {};
+          migrated.nodeDelegations = migrated.nodeDelegations || {};
+          migrated.resubmitInfo = migrated.resubmitInfo || undefined;
+
+          if (
+            migrated.approvalStatus === "pending" &&
+            migrated.currentNodeId &&
+            !migrated.nodeEntryTimes[migrated.currentNodeId]
+          ) {
+            const lastHist = migrated.approvalHistory[migrated.approvalHistory.length - 1];
+            const inferTime = lastHist ? lastHist.timestamp : migrated.createdAt;
+            migrated.nodeEntryTimes[migrated.currentNodeId] = inferTime;
+          }
+
+          if (
+            migrated.approvalStatus === "pending" &&
+            migrated.matchedRouteId &&
+            migrated.approvalHistory.length > 0
+          ) {
+            for (const h of migrated.approvalHistory) {
+              if (h.action === "approve" && !migrated.nodeEntryTimes[h.nodeId]) {
+                const idx = migrated.approvalHistory.findIndex((x) => x.id === h.id);
+                const prev = idx > 0 ? migrated.approvalHistory[idx - 1] : null;
+                migrated.nodeEntryTimes[h.nodeId] = prev ? prev.timestamp : migrated.createdAt;
+              }
+            }
+          }
+
+          return migrated;
+        })
+      : mockRequisitions.map((r) => ({
+          ...r,
+          nodeEntryTimes: r.nodeEntryTimes || {},
+          nodeDelegations: r.nodeDelegations || {},
+          resubmitInfo: r.resubmitInfo || undefined,
+        }));
+
     set({
-      requisitions: reqs.length ? reqs : mockRequisitions,
+      requisitions: migrated,
       outbounds: outs.length ? outs : mockOutbounds,
       initialized: true,
     });
-    if (reqs.length === 0) saveLS("requisitions", mockRequisitions);
+    if (reqs.length === 0) saveLS("requisitions", migrated);
     if (outs.length === 0) saveLS("outbounds", mockOutbounds);
   },
 
@@ -150,25 +191,42 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
     let req = get().requisitions.find((r) => r.id === id);
     if (!req) return;
     // 1) release old frozen
+    const previousItems = [...req.items];
     useBatchStore.getState().releaseFrozen(
-      req.items.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
+      previousItems.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
     );
+    // 收集退回信息
+    const returnRecord = [...req.approvalHistory].reverse().find((h) => h.action === "return");
+    const resubmitHistoryEntry = returnRecord
+      ? {
+          returnedAt: returnRecord.timestamp,
+          returnedBy: returnRecord.approverId,
+          returnedByUserName: returnRecord.approverName,
+          returnOpinion: returnRecord.opinion || "",
+          resubmittedAt: now,
+          previousItems,
+          newItems,
+        }
+      : null;
     // 2) clear history / reset state
-    const list = get().requisitions.map((r) =>
-      r.id === id
-        ? {
-            ...r,
-            items: newItems,
-            totalAmount: newTotalAmount,
-            matchedRouteId: routeId,
-            matchedRouteName: routeName,
-            approvalStatus: "pending" as const,
-            currentNodeId: firstNodeId,
-            nodeEntryTimes: { [firstNodeId]: now },
-            nodeDelegations: {},
-          }
-        : r
-    );
+    const list = get().requisitions.map((r) => {
+      if (r.id !== id) return r;
+      const newInfo = r.resubmitInfo || { resubmitCount: 0, history: [] };
+      if (resubmitHistoryEntry) newInfo.history.push(resubmitHistoryEntry);
+      newInfo.resubmitCount = newInfo.history.length;
+      return {
+        ...r,
+        items: newItems,
+        totalAmount: newTotalAmount,
+        matchedRouteId: routeId,
+        matchedRouteName: routeName,
+        approvalStatus: "pending" as const,
+        currentNodeId: firstNodeId,
+        nodeEntryTimes: { [firstNodeId]: now },
+        nodeDelegations: {},
+        resubmitInfo: newInfo,
+      };
+    });
     set({ requisitions: list });
     saveLS("requisitions", list);
     const req2 = list.find((r) => r.id === id);

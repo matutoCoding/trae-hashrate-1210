@@ -10,6 +10,8 @@ import {
   Clock,
   TrendingUp,
   Layers,
+  BookmarkCheck,
+  ShieldAlert,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Card, CardBody } from "@/components/ui/Card";
@@ -98,6 +100,38 @@ const InventoryList: React.FC = () => {
     return { totalReagents, totalBatches, totalQty, totalValue, warningCount };
   }, [grouped]);
 
+  const alertStats = React.useMemo(() => {
+    let lowStockBatches = 0;
+    let highFrozenBatches = 0;
+    let bothBatches = 0;
+    let totalBlockedValue = 0;
+    let affectedReagents = new Set<string>();
+    for (const b of batches) {
+      if (b.isLocked) continue;
+      const availableQty = Math.max(0, b.remainingQty - (b.frozenQty || 0));
+      const frozenQty = b.frozenQty || 0;
+      const availableRatio = b.quantity > 0 ? availableQty / b.quantity : 0;
+      const frozenRatio = b.remainingQty > 0 ? frozenQty / b.remainingQty : 0;
+      const ls = availableRatio < 0.2;
+      const hf = frozenRatio > 0.7;
+      if (ls) lowStockBatches++;
+      if (hf) highFrozenBatches++;
+      if (ls && hf) bothBatches++;
+      if (ls || hf) {
+        totalBlockedValue += frozenQty * b.unitPrice;
+        affectedReagents.add(b.reagentCode);
+      }
+    }
+    return {
+      lowStockBatches,
+      highFrozenBatches,
+      bothBatches,
+      total: lowStockBatches + highFrozenBatches - bothBatches,
+      totalBlockedValue,
+      affectedReagents: affectedReagents.size,
+    };
+  }, [batches]);
+
   const toggleExpand = (code: string) => {
     setExpandedCodes((prev) => {
       const n = new Set(prev);
@@ -124,6 +158,20 @@ const InventoryList: React.FC = () => {
         icon={<Package className="h-5 w-5" />}
         actions={
           <div className="flex items-center gap-2">
+            <Link to="/inventory/alert">
+              <Button
+                variant={alertStats.total > 0 ? "warning" : "outline"}
+                size="md"
+                leftIcon={<ShieldAlert className="h-4 w-4" />}
+              >
+                占用预警
+                {alertStats.total > 0 && (
+                  <Badge tone="danger" size="sm" className="ml-1 !h-4 !px-1.5 !text-[10px]">
+                    {alertStats.total}
+                  </Badge>
+                )}
+              </Button>
+            </Link>
             <Link to="/inventory/warning">
               <Button variant="outline" size="md" leftIcon={<AlertTriangle className="h-4 w-4" />}>
                 临期预警
@@ -138,7 +186,7 @@ const InventoryList: React.FC = () => {
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <KpiCard
           label="试剂种类"
           value={stats.totalReagents}
@@ -170,6 +218,23 @@ const InventoryList: React.FC = () => {
           icon={<AlertTriangle className="h-5 w-5" />}
           sub="含临期或过期批次"
           onClick={() => navigate("/inventory/warning")}
+        />
+        <KpiCard
+          label="占用预警"
+          value={
+            <span className={cn(alertStats.total > 0 ? "text-warning-red" : "text-success-600")}>
+              {alertStats.total}
+            </span>
+          }
+          suffix="批"
+          tone={alertStats.total > 0 ? "danger" : "success"}
+          icon={<BookmarkCheck className="h-5 w-5" />}
+          sub={
+            alertStats.total > 0
+              ? `冻结 ${currency(alertStats.totalBlockedValue)}`
+              : "库存健康"
+          }
+          onClick={() => navigate("/inventory/alert")}
         />
       </div>
 
