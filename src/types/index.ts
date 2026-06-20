@@ -56,6 +56,7 @@ export interface ReagentBatch {
   operatorId: string;
   createdAt: string;
   remainingQty: number;
+  frozenQty: number;
 }
 
 export interface RouteCondition {

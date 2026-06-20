@@ -81,6 +81,7 @@ export const mockBatches: ReagentBatch[] = (() => {
         operatorId: "u_keeper",
         createdAt: todayISO(),
         remainingQty: remain,
+        frozenQty: 0,
       });
     }
   });

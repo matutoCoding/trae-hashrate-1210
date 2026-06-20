@@ -72,7 +72,7 @@ const RequisitionNew: React.FC = () => {
     const map = new Map<string, { code: string; name: string; hazard: string }>();
     const today = new Date().toISOString().slice(0, 10);
     batches
-      .filter((b) => !b.isLocked && b.remainingQty > 0 && b.inspectionPassed && b.expiryDate >= today)
+      .filter((b) => !b.isLocked && (b.remainingQty - (b.frozenQty || 0)) > 0 && b.inspectionPassed && b.expiryDate >= today)
       .forEach((b) => {
         if (!map.has(b.reagentCode)) {
           map.set(b.reagentCode, {
@@ -121,13 +121,15 @@ const RequisitionNew: React.FC = () => {
     rows.forEach((row) => {
       if (row.reagentCode && row.requiredQty > 0) {
         const result = (() => {
+          const today = new Date().toISOString().slice(0, 10);
           const candidates = batches
             .filter(
               (b) =>
                 b.reagentCode === row.reagentCode &&
-                b.remainingQty > 0 &&
+                (b.remainingQty - (b.frozenQty || 0)) > 0 &&
                 !b.isLocked &&
-                b.inspectionPassed
+                b.inspectionPassed &&
+                b.expiryDate >= today
             )
             .sort((a, b) => {
               const cmp = a.expiryDate.localeCompare(b.expiryDate);
@@ -140,13 +142,14 @@ const RequisitionNew: React.FC = () => {
           let totalAvailable = 0;
 
           candidates.forEach((b) => {
-            totalAvailable += b.remainingQty;
+            totalAvailable += b.remainingQty - (b.frozenQty || 0);
           });
 
           for (const b of candidates) {
             if (accumulated >= row.requiredQty) break;
             const remainNeed = row.requiredQty - accumulated;
-            const allocate = Math.min(remainNeed, b.remainingQty);
+            const available = b.remainingQty - (b.frozenQty || 0);
+            const allocate = Math.min(remainNeed, available);
             resultItems.push({
               id: "fi_" + uid().slice(0, 6),
               batchId: b.id,

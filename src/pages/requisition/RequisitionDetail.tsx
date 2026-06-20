@@ -68,7 +68,7 @@ const RequisitionDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const user = useCurrentUser();
-  const { batches, decrementRemaining } = useBatchStore();
+  const { batches, deductAndReleaseFrozen } = useBatchStore();
   const { rules } = useApprovalStore();
   const { findById, addApprovalRecord, addOutbound, outbounds } = useRequisitionStore();
   const toast = useToast();
@@ -302,9 +302,6 @@ const RequisitionDetail: React.FC = () => {
           remainingAfter: Math.max(0, (bat?.remainingQty || 0) - it.quantity),
         };
       });
-      decrementRemaining(
-        req.items.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
-      );
       addOutbound({
         requisitionId: req.id,
         operatorId: user.id,

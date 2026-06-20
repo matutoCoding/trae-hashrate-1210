@@ -12,6 +12,9 @@ import {
   ChevronDown,
   FileText,
   AlertTriangle,
+  Clock,
+  Users,
+  CircleDot,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AppShell, PageHeader } from "@/components/layout/AppShell";
@@ -681,6 +684,179 @@ export default function ApprovalTodo() {
                 </div>
               </div>
             )}
+
+            {(() => {
+              const rule = rules.find((r) => r.id === selectedReq.matchedRouteId);
+              if (!rule?.workflow) return null;
+              const approveNodes = rule.workflow.nodes.filter(
+                (n) => n.type === "approve"
+              );
+              const approvedIds = new Set(
+                selectedReq.approvalHistory
+                  .filter((h) => h.action === "approve")
+                  .map((h) => h.nodeId)
+              );
+              const delegateRecords = selectedReq.approvalHistory.filter(
+                (h) => h.action === "delegate"
+              );
+              return (
+                <div>
+                  <h4 className="text-sm font-semibold text-ink-900 mb-3">
+                    审批流轨迹
+                  </h4>
+                  <div className="flex items-center gap-0">
+                    {rule.workflow.nodes
+                      .filter(
+                        (n) =>
+                          n.type === "start" ||
+                          n.type === "approve" ||
+                          n.type === "end"
+                      )
+                      .map((node, idx, arr) => {
+                        const isStart = node.type === "start";
+                        const isEnd = node.type === "end";
+                        const isDone =
+                          isStart ||
+                          isEnd ||
+                          approvedIds.has(node.id);
+                        const isCurrent =
+                          !isStart &&
+                          !isEnd &&
+                          node.id === selectedReq.currentNodeId &&
+                          selectedReq.approvalStatus === "pending";
+                        const handlerRecord = selectedReq.approvalHistory.find(
+                          (h) => h.nodeId === node.id && h.action === "approve"
+                        );
+                        const delegateRec = delegateRecords.find(
+                          (h) => h.nodeId === node.id
+                        );
+                        const timeoutHrs = node.timeoutHours;
+                        let timeoutLabel = "";
+                        if (isCurrent && timeoutHrs) {
+                          const entryTime = handlerRecord?.timestamp
+                            ? new Date(handlerRecord.timestamp)
+                            : new Date(selectedReq.createdAt);
+                          const elapsed =
+                            (Date.now() - entryTime.getTime()) / 3600000;
+                          const remaining = timeoutHrs - elapsed;
+                          if (remaining > 0) {
+                            timeoutLabel = `剩余${Math.floor(remaining)}h`;
+                          } else {
+                            timeoutLabel = `已超时${Math.abs(Math.floor(remaining))}h`;
+                          }
+                        }
+                        return (
+                          <React.Fragment key={node.id}>
+                            <div className="flex flex-col items-center" style={{ minWidth: 90 }}>
+                              <div
+                                className={cn(
+                                  "flex items-center justify-center rounded-full border-2 transition-all",
+                                  isStart
+                                    ? "h-8 w-8 border-success-500 bg-success-50 text-success-500"
+                                    : isEnd
+                                    ? "h-8 w-8 border-ink-300 bg-ink-50 text-ink-400"
+                                    : isDone
+                                    ? "h-8 w-8 border-success-500 bg-success-500 text-white"
+                                    : isCurrent
+                                    ? "h-8 w-8 border-brand-500 bg-brand-500 text-white animate-pulse shadow-[0_0_0_4px_rgba(15,76,129,0.15)]"
+                                    : "h-8 w-8 border-ink-200 bg-white text-ink-400"
+                                )}
+                              >
+                                {isDone && !isStart && !isEnd ? (
+                                  <CheckCircle2 className="h-4 w-4" />
+                                ) : isCurrent ? (
+                                  <CircleDot className="h-4 w-4" />
+                                ) : isStart ? (
+                                  <CheckCircle2 className="h-4 w-4" />
+                                ) : (
+                                  <span className="text-[11px] font-bold">
+                                    {approveNodes.findIndex(
+                                      (n) => n.id === node.id
+                                    ) + 1}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-1.5 text-center">
+                                <div
+                                  className={cn(
+                                    "text-[11px] font-semibold leading-tight",
+                                    isCurrent
+                                      ? "text-brand-600"
+                                      : isDone
+                                      ? "text-success-600"
+                                      : "text-ink-400"
+                                  )}
+                                >
+                                  {node.label}
+                                </div>
+                                {handlerRecord && (
+                                  <div className="text-[10px] text-ink-500 mt-0.5">
+                                    {handlerRecord.approverName}
+                                  </div>
+                                )}
+                                {isCurrent && !handlerRecord && (
+                                  <div className="text-[10px] text-ink-500 mt-0.5">
+                                    {node.assigneeUserIds
+                                      ? node.assigneeUserIds
+                                          .map(
+                                            (uid) =>
+                                              useAuthStore
+                                                .getState()
+                                                .users.find(
+                                                  (u) => u.id === uid
+                                                )?.realName ?? uid
+                                          )
+                                          .join("、")
+                                      : node.assigneeRoles
+                                          ?.map((r) => {
+                                            const users = useAuthStore
+                                              .getState()
+                                              .users.filter((u) =>
+                                                u.roles.includes(r as any)
+                                              );
+                                            return users
+                                              .map((u) => u.realName)
+                                              .join("、");
+                                          })
+                                          .join("、") ?? "-"}
+                                  </div>
+                                )}
+                                {delegateRec && isCurrent && (
+                                  <div className="text-[10px] text-brand-500 mt-0.5 flex items-center justify-center gap-0.5">
+                                    <Forward className="h-2.5 w-2.5" />
+                                    转办中
+                                  </div>
+                                )}
+                                {timeoutLabel && (
+                                  <div
+                                    className={cn(
+                                      "text-[10px] mt-0.5 font-medium",
+                                      timeoutLabel.includes("超时")
+                                        ? "text-warning-red"
+                                        : "text-amber-600"
+                                    )}
+                                  >
+                                    <Clock className="h-2.5 w-2.5 inline mr-0.5" />
+                                    {timeoutLabel}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            {idx < arr.length - 1 && (
+                              <div
+                                className={cn(
+                                  "flex-1 h-0.5 mt-4 mx-1 rounded",
+                                  isDone ? "bg-success-300" : "bg-ink-200"
+                                )}
+                              />
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </Modal>

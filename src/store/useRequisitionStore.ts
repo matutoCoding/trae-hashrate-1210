@@ -4,6 +4,7 @@ import { loadLS, saveLS } from "@/utils/storage";
 import { mockRequisitions, mockOutbounds } from "@/utils/mock/data";
 import { getWarningLevel, nowISO, uid } from "@/utils/date";
 import type { ApprovalStatus } from "@/types";
+import { useBatchStore } from "@/store/useBatchStore";
 
 interface ReqState {
   requisitions: Requisition[];
@@ -79,6 +80,12 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
     );
     set({ requisitions: list });
     saveLS("requisitions", list);
+    const req = list.find((r) => r.id === id);
+    if (req) {
+      useBatchStore.getState().freezeQty(
+        req.items.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
+      );
+    }
   },
 
   addApprovalRecord: (reqId, record, advanceNode, finalStatus) => {
@@ -101,6 +108,14 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
     );
     set({ requisitions: list });
     saveLS("requisitions", list);
+    if (finalStatus === "rejected" || finalStatus === "returned") {
+      const req = list.find((r) => r.id === reqId);
+      if (req) {
+        useBatchStore.getState().releaseFrozen(
+          req.items.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
+        );
+      }
+    }
   },
 
   setCurrentNode: (id, nodeId) => {
@@ -121,6 +136,9 @@ export const useRequisitionStore = create<ReqState>((set, get) => ({
     const outs = [ob, ...get().outbounds];
     set({ outbounds: outs });
     saveLS("outbounds", outs);
+    useBatchStore.getState().deductAndReleaseFrozen(
+      data.items.map((it) => ({ batchId: it.batchId, quantity: it.quantity }))
+    );
     const reqs = get().requisitions.map((r) =>
       r.id === data.requisitionId ? { ...r, approvalStatus: "outbound_completed" as const } : r
     );

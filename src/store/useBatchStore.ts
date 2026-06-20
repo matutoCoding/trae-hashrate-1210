@@ -8,10 +8,13 @@ interface BatchState {
   batches: ReagentBatch[];
   initialized: boolean;
   init: () => void;
-  addBatch: (data: Omit<ReagentBatch, "id" | "createdAt" | "remainingQty">) => ReagentBatch;
+  addBatch: (data: Omit<ReagentBatch, "id" | "createdAt" | "remainingQty" | "frozenQty">) => ReagentBatch;
   updateBatch: (id: string, patch: Partial<ReagentBatch>) => void;
   lockBatch: (id: string, reason: string) => void;
   unlockBatch: (id: string) => void;
+  freezeQty: (items: Array<{ batchId: string; quantity: number }>) => void;
+  releaseFrozen: (items: Array<{ batchId: string; quantity: number }>) => void;
+  deductAndReleaseFrozen: (items: Array<{ batchId: string; quantity: number }>) => void;
   decrementRemaining: (items: Array<{ batchId: string; quantity: number }>) => void;
   scanAndLockExpired: () => number;
 }
@@ -24,8 +27,12 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     if (get().initialized) return;
     const data = loadLS<ReagentBatch[]>("batches", []);
     const batches = data.length ? data : mockBatches;
-    set({ batches, initialized: true });
+    const migrated = batches.map((b) =>
+      b.frozenQty === undefined ? { ...b, frozenQty: 0 } : b
+    );
+    set({ batches: migrated, initialized: true });
     if (data.length === 0) saveLS("batches", mockBatches);
+    else if (migrated !== batches) saveLS("batches", migrated);
     setTimeout(() => get().scanAndLockExpired(), 300);
   },
 
@@ -38,6 +45,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
       id: "bat_" + uid().slice(0, 8),
       createdAt: nowISO(),
       remainingQty: data.quantity,
+      frozenQty: 0,
       isLocked: autoLocked,
       lockReason: autoLocked
         ? isExpired
@@ -61,6 +69,40 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
   lockBatch: (id, reason) => get().updateBatch(id, { isLocked: true, lockReason: reason }),
   unlockBatch: (id) => get().updateBatch(id, { isLocked: false, lockReason: undefined }),
+
+  freezeQty: (items) => {
+    const list = get().batches.map((b) => {
+      const it = items.find((x) => x.batchId === b.id);
+      if (!it) return b;
+      return { ...b, frozenQty: b.frozenQty + it.quantity };
+    });
+    set({ batches: list });
+    saveLS("batches", list);
+  },
+
+  releaseFrozen: (items) => {
+    const list = get().batches.map((b) => {
+      const it = items.find((x) => x.batchId === b.id);
+      if (!it) return b;
+      return { ...b, frozenQty: Math.max(0, b.frozenQty - it.quantity) };
+    });
+    set({ batches: list });
+    saveLS("batches", list);
+  },
+
+  deductAndReleaseFrozen: (items) => {
+    const list = get().batches.map((b) => {
+      const it = items.find((x) => x.batchId === b.id);
+      if (!it) return b;
+      return {
+        ...b,
+        remainingQty: Math.max(0, b.remainingQty - it.quantity),
+        frozenQty: Math.max(0, b.frozenQty - it.quantity),
+      };
+    });
+    set({ batches: list });
+    saveLS("batches", list);
+  },
 
   decrementRemaining: (items) => {
     const list = get().batches.map((b) => {

@@ -18,7 +18,7 @@ export const calculateFifoBatches = (
     .filter(
       (b) =>
         b.reagentCode === reagentCode &&
-        b.remainingQty > 0 &&
+        (b.remainingQty - (b.frozenQty || 0)) > 0 &&
         !b.isLocked &&
         b.inspectionPassed &&
         b.expiryDate >= today
@@ -34,13 +34,14 @@ export const calculateFifoBatches = (
   let totalAvailable = 0;
 
   candidates.forEach((b) => {
-    totalAvailable += b.remainingQty;
+    totalAvailable += b.remainingQty - (b.frozenQty || 0);
   });
 
   for (const b of candidates) {
     if (accumulated >= requiredQty) break;
     const remainNeed = requiredQty - accumulated;
-    const allocate = Math.min(remainNeed, b.remainingQty);
+    const available = b.remainingQty - (b.frozenQty || 0);
+    const allocate = Math.min(remainNeed, available);
     const wl = getWarningLevel(b.expiryDate, b.isLocked);
     result.push({
       id: "fi_" + uid().slice(0, 6),
@@ -67,7 +68,7 @@ export const calculateFifoBatches = (
   };
 };
 
-export const groupInventoryByReagent = (batches: ReagentBatch[]) => {
+export const groupInventoryByReagent = (batches: ReagentBatch[], today: string = new Date().toISOString().slice(0, 10)) => {
   const map = new Map<
     string,
     {
@@ -85,7 +86,9 @@ export const groupInventoryByReagent = (batches: ReagentBatch[]) => {
     }
   >();
   for (const b of batches) {
+    if (b.isLocked || b.expiryDate < today) continue;
     const key = b.reagentCode;
+    const availableQty = b.remainingQty - (b.frozenQty || 0);
     const cur = map.get(key) || {
       reagentCode: b.reagentCode,
       reagentName: b.reagentName,
@@ -99,8 +102,8 @@ export const groupInventoryByReagent = (batches: ReagentBatch[]) => {
       warningBatches: 0,
       nearestExpiry: undefined as string | undefined,
     };
-    cur.totalQty += b.remainingQty;
-    cur.totalValue += b.remainingQty * b.unitPrice;
+    cur.totalQty += availableQty;
+    cur.totalValue += availableQty * b.unitPrice;
     cur.batchCount += 1;
     const wl = getWarningLevel(b.expiryDate, b.isLocked);
     if (wl.level !== "normal") cur.warningBatches += 1;

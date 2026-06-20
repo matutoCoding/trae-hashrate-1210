@@ -22,8 +22,24 @@ export const useApprovalStore = create<ApprovalState>((set, get) => ({
   init: () => {
     if (get().initialized) return;
     const data = loadLS<ApprovalRouteRule[]>("approval_rules", []);
-    set({ rules: data.length ? data : mockRouteRules, initialized: true });
-    if (data.length === 0) saveLS("approval_rules", mockRouteRules);
+    if (!data.length) {
+      set({ rules: mockRouteRules, initialized: true });
+      saveLS("approval_rules", mockRouteRules);
+      return;
+    }
+    const hasHighAmountRule = data.some((r) => r.id === "rule_amount_high");
+    let rules = data;
+    if (!hasHighAmountRule) {
+      const highRule = mockRouteRules.find((r) => r.id === "rule_amount_high");
+      if (highRule) {
+        rules = [highRule, ...data.map((r) => {
+          if (r.id === "rule_hazard") return r;
+          return { ...r, priority: r.priority + 1 };
+        })];
+      }
+      saveLS("approval_rules", rules);
+    }
+    set({ rules, initialized: true });
   },
 
   addRule: (data) => {
